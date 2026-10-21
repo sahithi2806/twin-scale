@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+  
+  body {
+    font-family: var(--font-sans);
+    background-color: #f8fafc;
+    color: #1e293b;
+    overflow-x: hidden;
+  }
+}
+
+/* Techy Grid Background Pattern */
+.tech-grid-pattern {
+  background-color: #f8fafc;
+  background-image: 
+    radial-gradient(#e2e8f0 1px, transparent 1px),
+    linear-gradient(to right, rgba(226, 232, 240, 0.4) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(226, 232, 240, 0.4) 1px, transparent 1px);
+  background-size: 24px 24px, 48px 48px, 48px 48px;
+}
+
+/* Glassmorphism Surface */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.glass-panel-elevated {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05), 0 8px 10px -6px rgba(15, 23, 42, 0.03);
+}
+
+/* CPU Chip styling */
+.cpu-socket-pin-h {
+  background: repeating-linear-gradient(
+    to right,
+    #94a3b8,
+    #94a3b8 2px,
+    transparent 2px,
+    transparent 5px
+  );
+}
+
+.cpu-socket-pin-v {
+  background: repeating-linear-gradient(
+    to bottom,
+    #94a3b8,
+    #94a3b8 2px,
+    transparent 2px,
+    transparent 5px
+  );
+}
+
+/* Metallic Heat Spreader effect */
+.metallic-ihs {
+  background: linear-gradient(135deg, #f1f5f9 0%, #ffffff 40%, #e2e8f0 100%);
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.9),
+              inset 0 -1px 2px 0 rgba(148, 163, 184, 0.4),
+              0 2px 4px rgba(15, 23, 42, 0.04);
+}
+
+/* High-tech pulsing indicator */
+@keyframes tech-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(1.08);
+  }
+}
+
+.animate-tech-pulse {
+  animation: tech-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
