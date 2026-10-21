@@ -1,6 +1,6 @@
-# Data Center Digital Twin
+# Data Center Digital Twin & Simulation Engine
 
-A high-fidelity full-stack Digital Twin application for data center operations, monitoring **16 virtual server CPUs** in real time with thermal analytics, capacity tracking, and automated idle energy consolidation.
+A high-fidelity full-stack Digital Twin application for data center operations. Monitors **16 virtual server CPUs** in real time with thermal analytics, capacity tracking, synthetic workload generation, **Min-Min scheduling**, and automated energy optimization.
 
 ---
 
@@ -9,133 +9,116 @@ A high-fidelity full-stack Digital Twin application for data center operations, 
 ```text
 data-center-twin/
 ├── backend/
-│   ├── main.py              # FastAPI application with CORS & REST endpoints
-│   ├── database.py          # SQLite connection, schema init & 16-server seeding
-│   ├── models.py            # Pydantic data schemas for telemetry & savings
-│   ├── requirements.txt     # Python dependencies (fastapi, uvicorn, pydantic, httpx)
-│   └── servers.db           # SQLite database storing the 16 virtual servers
+│   ├── main.py                     # FastAPI app with POST /api/simulations, telemetry & reset
+│   ├── simulation.py               # VirtualServer model, WorkloadGenerator, MinMinScheduler, SimulationEngine
+│   ├── database.py                 # SQLite schema (servers, simulations, step_metrics, server_stats) & atomic transactions
+│   ├── models.py                   # Pydantic schemas (SimulationRequest, SimulationResponse, Server, Telemetry)
+│   ├── requirements.txt            # Python dependencies (fastapi, uvicorn, pydantic, httpx)
+│   └── servers.db                  # SQLite database storing server states & simulation history
 ├── frontend/
-│   ├── index.html           # HTML template with Inter & JetBrains Mono fonts
-│   ├── package.json         # React 19, Vite, Tailwind CSS v4, Lucide icons
-│   ├── vite.config.js       # Vite build & dev server configuration
-│   ├── postcss.config.js    # Tailwind PostCSS configuration
+│   ├── index.html                  # HTML template with Inter & JetBrains Mono fonts
+│   ├── package.json                # React 19, Vite, Tailwind CSS v4, Lucide icons
+│   ├── vite.config.js              # Vite build configuration
+│   ├── postcss.config.js           # PostCSS configuration for Tailwind v4
 │   └── src/
-│       ├── main.jsx         # React application entry point
-│       ├── App.jsx          # React Router setup (/ and /dashboard)
-│       ├── index.css        # Techy light theme, chip pins & glassmorphic styling
+│       ├── main.jsx                # React application entry point
+│       ├── App.jsx                 # React Router setup (/ and /dashboard)
+│       ├── index.css               # Clean light techy theme, chip socket pins & glassmorphic panels
 │       ├── services/
-│       │   └── api.js       # API client with graceful fallback dataset
+│       │   └── api.js              # API client (fetchServers, runSimulation, toggleStatus, etc.)
 │       ├── components/
-│       │   ├── Navbar.jsx               # Navigation bar & backend status badge
-│       │   ├── CpuChip.jsx              # CPU component with 100% vs 20% opacity logic
-│       │   ├── ServerDetailPanel.jsx    # Metric telemetry panel & state toggle
-│       │   ├── EnergySavingsModal.jsx   # Breakdown modal for energy & cost savings
-│       │   └── StatsBar.jsx             # Prominent clickable Energy Saved card & KPIs
+│       │   ├── Navbar.jsx                  # Header with live FastAPI status badge & energy shortcut
+│       │   ├── CpuChip.jsx                 # CPU component with 100% vs 20% opacity isolation logic
+│       │   ├── ServerDetailPanel.jsx       # Real-time metrics panel, flags, & Active/Idle toggle
+│       │   ├── SimulationControlPanel.jsx  # Task slider, seed input, & 'Start Simulation' button
+│       │   ├── EnergySavingsModal.jsx      # Modal breakdown of kWh saved, cost, and PUE
+│       │   └── StatsBar.jsx                # Prominent clickable 'Energy Saved' card & KPIs
 │       └── pages/
-│           ├── LandingPage.jsx          # Digital Twin overview & prominent CTA
-│           └── DashboardPage.jsx        # 4×4 interactive CPU grid & telemetry
+│           ├── LandingPage.jsx             # Digital Twin overview & 'Go to CPU Dashboard' button
+│           └── DashboardPage.jsx           # 4×4 interactive CPU grid & dynamic simulation visualization
 └── README.md
 ```
 
 ---
 
-## 🚀 Quick Start Guide
+## ⚡ Sprint 2 Core Simulation Engine
 
-### 1. Prerequisites
-- **Node.js** v18+ (tested on v22)
-- **Python** 3.10+ (tested on 3.12)
+### 1. Database Schema (SQLite)
+- `simulations`: Records each run (`run_id`, `policy`, `parameters`, `total_tasks`, `makespan`, `total_energy_kwh`, `baseline_energy_kwh`, `energy_saved_kwh`, `created_at`).
+- `step_metrics`: Discrete time-series intervals (`step`, `timestamp`, `server_id`, `utilization`, `energy`).
+- `server_stats`: Aggregated node statistics (`server_id`, `avg_utilization`, `energy_consumed`, `total_tasks_assigned`, `flags`).
+- `servers`: Maintained with the latest simulation state (`current_utilization`, `status`, `temperature_c`, `power_draw_w`, `active_workloads`).
+- **Transaction Guarantee**: All tables are written within a **single atomic SQLite transaction** using Python's `with conn:` context manager.
 
----
+### 2. Virtual Server Model & Power Model
+- **VirtualServer Class**: Tracks core count (32 to 128 vCPUs), MIPS processing speed, dynamic task queue, and ready time.
+- **Linear Power Model**:
+  $$P(u) = P_{\text{idle}} + (P_{\text{max}} - P_{\text{idle}}) \times \frac{u}{100}$$
+  Nodes in standby sleep mode consume reduced base power (~50–85W), while loaded nodes scale up to 220–490W.
+- **Thermal Response**:
+  $$T(u) = 28^\circ\text{C} + \frac{u}{100} \times 36^\circ\text{C}$$
 
-### 2. Backend Setup (FastAPI + SQLite)
+### 3. Workload Generator
+- Generates synthetic computational tasks with multi-modal requirements:
+  - 25% small batch / web requests
+  - 55% standard enterprise microservices
+  - 20% heavy analytical / AI compute jobs
+- Uses a **fixed random seed** (`seed=42` by default) to ensure deterministic, fair comparisons across runs.
 
-Open a terminal in the root directory:
-
-```bash
-cd backend
-
-# Install dependencies
-python -m pip install -r requirements.txt
-
-# Start the FastAPI server (runs on http://localhost:8000)
-python -m uvicorn main:app --reload --port 8000
-```
-
-The SQLite database (`servers.db`) will automatically initialize and populate 16 virtual server records on startup.
-
-**Interactive API Documentation**:
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-- ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
-
----
-
-### 3. Frontend Setup (React + Vite + Tailwind CSS)
-
-Open a second terminal in the root directory:
-
-```bash
-cd frontend
-
-# Install dependencies (already prepared)
-npm install
-
-# Start Vite dev server (runs on http://localhost:5173)
-npm run dev
-```
-
-Visit **[http://localhost:5173](http://localhost:5173)** in your browser.
+### 4. Baseline Scheduler: Min-Min Algorithm
+1. Computes expected completion time $CT(T_i, S_j) = \text{ready\_time}[S_j] + \frac{\text{workload}}{\text{speed}}$ for each unmapped task $T_i$ on every server $S_j$.
+2. Identifies the server that minimizes completion time for each task: $S^*(T_i) = \arg\min_j CT(T_i, S_j)$.
+3. Selects the task with the overall minimum completion time: $T^* = \arg\min_{T_i} CT(T_i, S^*(T_i))$.
+4. Assigns $T^*$ to $S^*(T^*)$, updates the server's ready time, and repeats until all tasks are scheduled.
 
 ---
 
-## 🔌 API Endpoints (FastAPI)
+## 🔌 API Endpoints
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/servers` | Returns list of all 16 virtual servers with `server_id`, `capacity`, `current_utilization`, `status`, `rack_id`, `temperature_c`, and `power_draw_w` |
-| `GET` | `/api/servers/{server_id}` | Returns real-time telemetry for a specific server node |
-| `POST` | `/api/servers/{server_id}/toggle-status` | Toggles node state between `active` and `idle`, adjusting utilization and power draw |
-| `PATCH` | `/api/servers/{server_id}` | Updates specific telemetry attributes (utilization, active workloads, status) |
-| `GET` | `/api/energy-savings` | Returns breakdown of energy conserved (kWh), cost savings ($), carbon offset (kg CO₂), and PUE ratio (1.15) |
-| `POST` | `/api/servers/reset` | Resets all 16 servers back to default baseline |
-| `GET` | `/api/health` | Health check probe |
+| `POST` | `/api/simulations` | Executes Min-Min simulation with configurable tasks & seed, persists in SQLite transaction, and returns results |
+| `GET` | `/api/simulations/latest` | Returns the most recent completed simulation run |
+| `GET` | `/api/simulations/{run_id}` | Retrieves full simulation run details, server stats, and step metrics |
+| `GET` | `/api/servers` | Returns telemetry for all 16 virtual servers |
+| `GET` | `/api/servers/{server_id}` | Retrieves specific virtual server metrics |
+| `POST` | `/api/servers/{server_id}/toggle-status` | Toggles node state between `active` and `idle` |
+| `GET` | `/api/energy-savings` | Returns breakdown of energy saved, cost savings ($), carbon offset, and PUE |
+| `POST` | `/api/servers/reset` | Resets all 16 servers to the default baseline |
+| `GET` | `/api/health` | Health check probe and active database status |
 
-### Example Server Payload:
-```json
-{
-  "id": 1,
-  "server_id": "SRV-01",
-  "capacity": "64 vCPU / 256 GB RAM",
-  "current_utilization": 84.5,
-  "status": "active",
-  "rack_id": "RACK-A1",
-  "temperature_c": 58.2,
-  "power_draw_w": 410.0,
-  "active_workloads": 19
-}
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Start FastAPI Backend Server
+```bash
+cd backend
+python -m uvicorn main:app --reload --port 8000
 ```
+- API Endpoint: `http://localhost:8000/api/servers`
+- Interactive Swagger UI: `http://localhost:8000/docs`
+
+### 2. Start React + Vite Frontend
+```bash
+cd frontend
+npm run dev
+```
+- Application URL: `http://localhost:5173`
 
 ---
 
 ## 🖥️ Frontend UI Features & Logic
 
-1. **Clean, Light 'Techy' Theme**:
-   - Palette: Clean crisp whites (`#ffffff`), subtle grays (`#f8fafc`, `#f1f5f9`), soft blue (`#0284c7`, `#38bdf8`), and soft green/emerald accents (`#10b981`, `#059669`).
-   - Circuit-inspired grid pattern, metallic CPU heat spreaders, and gold/silver perimeter socket pins.
-
-2. **React Router Architecture**:
-   - `/`: **Landing Page** with digital twin system overview, mini visualizer preview, and prominent **"Go to CPU Dashboard"** button.
-   - `/dashboard`: **Interactive CPU Utilization Page**.
-
-3. **CPU Utilization Page Logic**:
-   - **4×4 Grid Layout**: 16 realistic CPU chips organized across 4 data center racks (Rack A through D).
-   - **Utilization Gauges**: Radial SVG meters and percentage metrics on every CPU shape.
-   - **Focus & Opacity Isolation**:
-     - Clicking a CPU keeps the selected CPU at **100% opacity** (with subtle zoom and highlight ring).
-     - **All other CPUs automatically drop to 20% opacity (80% transparent)**.
-     - Clicking again or clicking "View All Servers" restores all 16 CPUs to 100% opacity.
-   - **Detailed Telemetry Panel**:
-     - Displays server ID, hardware capacity, thermal sensor reading, power wattage, active container workloads, and a **"Power On / Consolidate"** button that updates the SQLite backend.
-   - **Clickable 'Energy Saved' Card**:
-     - Positioned prominently at the top of the dashboard.
-     - Clicking opens a detailed breakdown modal displaying monthly kWh saved, utility dollar savings, carbon offset, and PUE comparison (1.15 vs 1.58 industry average).
-   - **Live Simulation Toggle**: Real-time minute-by-minute fluctuation simulator.
+1. **Simulation Control Panel**:
+   - Set task count (slider or quick presets: 50, 100, 200, 400 tasks).
+   - Configure random seed (with one-click "Randomize" generator).
+   - "Start Simulation" button with animated execution spinner.
+2. **Dynamic Data Binding**:
+   - On completion of `POST /api/simulations`, the 4×4 CPU grid immediately updates to show final node utilization, status, and temperatures.
+3. **Opacity Focus Isolation**:
+   - Clicking a CPU isolates that server at **100% opacity**, while all other 15 CPUs become dimmed to **20% opacity**.
+4. **Detailed Server Telemetry**:
+   - Displays mapped tasks, average utilization, energy consumed (kWh), and scheduler flags (`OPTIMAL_LOAD`, `HOTSPOT_HIGH_LOAD`, `IDLE_CONSOLIDATED`).
+5. **Real-time 'Energy Saved' Metrics**:
+   - Top card updates directly with the simulation run's energy savings and cost reduction compared to an unmanaged baseline.

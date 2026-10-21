@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 from typing import List, Dict, Any, Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "servers.db")
@@ -175,6 +176,8 @@ def get_db_connection() -> sqlite3.Connection:
 def init_db(force_reseed: bool = False):
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 1. Servers table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS servers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,9 +191,53 @@ def init_db(force_reseed: bool = False):
             active_workloads INTEGER NOT NULL
         )
     """)
+
+    # 2. Simulations table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS simulations (
+            run_id TEXT PRIMARY KEY,
+            policy TEXT NOT NULL,
+            parameters TEXT NOT NULL,
+            total_tasks INTEGER NOT NULL,
+            makespan REAL NOT NULL,
+            total_energy_kwh REAL NOT NULL,
+            baseline_energy_kwh REAL NOT NULL,
+            energy_saved_kwh REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # 3. Step metrics table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS step_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            step INTEGER NOT NULL,
+            timestamp REAL NOT NULL,
+            server_id TEXT NOT NULL,
+            utilization REAL NOT NULL,
+            energy REAL NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES simulations (run_id) ON DELETE CASCADE
+        )
+    """)
+
+    # 4. Server stats table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS server_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            avg_utilization REAL NOT NULL,
+            energy_consumed REAL NOT NULL,
+            total_tasks_assigned INTEGER NOT NULL,
+            flags TEXT,
+            FOREIGN KEY (run_id) REFERENCES simulations (run_id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
 
-    # Check row count
+    # Check row count for servers
     cursor.execute("SELECT COUNT(*) FROM servers")
     count = cursor.fetchone()[0]
 
@@ -216,6 +263,140 @@ def init_db(force_reseed: bool = False):
             ))
         conn.commit()
     conn.close()
+
+def save_simulation_results(sim: Dict[str, Any]):
+    """
+    Stores all simulation results (simulations, server_stats, step_metrics)
+    and updates server states inside a single atomic SQLite transaction.
+    """
+    conn = get_db_connection()
+    try:
+        with conn:  # Enforces a single atomic transaction
+            cursor = conn.cursor()
+
+            # 1. Store run record in simulations table
+            cursor.execute("""
+                INSERT INTO simulations 
+                (run_id, policy, parameters, total_tasks, makespan, total_energy_kwh, baseline_energy_kwh, energy_saved_kwh)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                sim["run_id"],
+                sim["policy"],
+                json.dumps(sim["parameters"]),
+                sim["total_tasks"],
+                sim["makespan_seconds"],
+                sim["total_energy_kwh"],
+                sim["baseline_energy_kwh"],
+                sim["energy_saved_kwh"]
+            ))
+
+            # 2. Store aggregated server statistics
+            for ss in sim["server_stats"]:
+                cursor.execute("""
+                    INSERT INTO server_stats 
+                    (run_id, server_id, avg_utilization, energy_consumed, total_tasks_assigned, flags)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    sim["run_id"],
+                    ss["server_id"],
+                    ss["avg_utilization"],
+                    ss["energy_consumed"],
+                    ss["total_tasks_assigned"],
+                    ss.get("flags", "")
+                ))
+
+            # 3. Store step metrics time-series
+            for sm in sim["step_metrics"]:
+                cursor.execute("""
+                    INSERT INTO step_metrics 
+                    (run_id, step, timestamp, server_id, utilization, energy)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    sim["run_id"],
+                    sm["step"],
+                    sm["timestamp"],
+                    sm["server_id"],
+                    sm["utilization"],
+                    sm["energy"]
+                ))
+
+            # 4. Synchronize virtual servers table with the latest simulation state
+            for srv in sim["servers"]:
+                cursor.execute("""
+                    UPDATE servers
+                    SET current_utilization = ?, status = ?, temperature_c = ?, power_draw_w = ?, active_workloads = ?
+                    WHERE server_id = ?
+                """, (
+                    srv["current_utilization"],
+                    srv["status"],
+                    srv["temperature_c"],
+                    srv["power_draw_w"],
+                    srv["active_workloads"],
+                    srv["server_id"]
+                ))
+    finally:
+        conn.close()
+
+def get_latest_simulation() -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM simulations ORDER BY created_at DESC LIMIT 1")
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    sim = dict(row)
+    sim["parameters"] = json.loads(sim["parameters"])
+    
+    # Fetch server_stats
+    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (sim["run_id"],))
+    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+    return sim
+
+def get_latest_simulation_by_policy(policy: str) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM simulations WHERE LOWER(policy) = LOWER(?) ORDER BY created_at DESC LIMIT 1", (policy,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    sim = dict(row)
+    sim["parameters"] = json.loads(sim["parameters"])
+    
+    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (sim["run_id"],))
+    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM step_metrics WHERE run_id = ? ORDER BY step ASC", (sim["run_id"],))
+    sim["step_metrics"] = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+    return sim
+
+def get_simulation_by_id(run_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM simulations WHERE run_id = ?", (run_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    sim = dict(row)
+    sim["parameters"] = json.loads(sim["parameters"])
+    
+    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (run_id,))
+    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM step_metrics WHERE run_id = ? ORDER BY step ASC", (run_id,))
+    sim["step_metrics"] = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+    return sim
 
 def get_all_servers() -> List[Dict[str, Any]]:
     conn = get_db_connection()

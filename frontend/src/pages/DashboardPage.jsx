@@ -3,6 +3,8 @@ import {
   fetchServers, 
   fetchEnergySavings, 
   toggleServerStatus, 
+  runSimulation,
+  fetchLatestSimulation,
   FALLBACK_16_SERVERS, 
   FALLBACK_ENERGY_SAVINGS 
 } from '../services/api';
@@ -11,42 +13,53 @@ import StatsBar from '../components/StatsBar';
 import CpuChip from '../components/CpuChip';
 import ServerDetailPanel from '../components/ServerDetailPanel';
 import EnergySavingsModal from '../components/EnergySavingsModal';
+import SimulationControlPanel from '../components/SimulationControlPanel';
+import CompareResultsSection from '../components/CompareResultsSection';
 
 import { 
   RefreshCw, 
-  SlidersHorizontal, 
-  Zap, 
-  Eye, 
   Grid3X3, 
   Play, 
   Pause, 
+  CheckCircle2, 
+  Zap, 
+  Sliders, 
+  Clock,
+  Sparkles,
   Info,
-  CheckCircle2,
-  Server
+  BarChart3
 } from 'lucide-react';
 
 export default function DashboardPage() {
+  const [activeView, setActiveView] = useState('matrix'); // 'matrix' | 'compare'
   const [servers, setServers] = useState([]);
   const [savingsData, setSavingsData] = useState(null);
+  const [latestSim, setLatestSim] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState(null);
   const [isEnergyModalOpen, setIsEnergyModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'idle'
-  const [isLiveSimulating, setIsLiveSimulating] = useState(false);
+  const [isLiveFluctuation, setIsLiveFluctuation] = useState(false);
+  const [simNotification, setSimNotification] = useState(null);
 
-  // Load servers and savings from backend API on mount
+  // Load servers, savings, and latest simulation on initial mount
   const loadData = async () => {
     setLoading(true);
     try {
-      const [serversRes, savingsRes] = await Promise.all([
+      const [serversRes, savingsRes, latestSimRes] = await Promise.all([
         fetchServers(),
-        fetchEnergySavings()
+        fetchEnergySavings(),
+        fetchLatestSimulation()
       ]);
       setServers(serversRes.data || FALLBACK_16_SERVERS);
       setSavingsData(savingsRes.data || FALLBACK_ENERGY_SAVINGS);
+      if (latestSimRes) {
+        setLatestSim(latestSimRes);
+      }
     } catch (err) {
-      console.error("Failed to fetch dashboard data:", err);
+      console.error("Failed to load initial data:", err);
       setServers(FALLBACK_16_SERVERS);
       setSavingsData(FALLBACK_ENERGY_SAVINGS);
     } finally {
@@ -58,41 +71,79 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  // Live simulation tick: subtly fluctuates active utilization for realism
+  // Trigger POST /api/simulations to run Min-Min or DQN Simulation Engine
+  const handleRunSimulation = async ({ num_tasks, policy, seed }) => {
+    setIsSimulating(true);
+    setSimNotification(null);
+    try {
+      const result = await runSimulation({ num_tasks, policy, seed });
+      const simData = result.data;
+
+      // 1. Dynamic Data Binding: Replace grid data with simulation result
+      if (simData.servers && simData.servers.length > 0) {
+        setServers(simData.servers);
+      }
+
+      // 2. Metrics Update: Save simulation run data for the 'Energy Saved' card & KPIs
+      setLatestSim(simData);
+
+      // 3. Update notification banner with policy & SLA info
+      setSimNotification({
+        run_id: simData.run_id,
+        policy: simData.policy || policy,
+        tasks: simData.total_tasks,
+        makespan: simData.makespan_seconds,
+        saved_kwh: simData.energy_saved_kwh,
+        saved_pct: simData.energy_saved_pct,
+        sla_violations: simData.sla_violations_count || 0
+      });
+
+      // Refresh dynamic energy savings
+      fetchEnergySavings().then(res => {
+        if (res && res.data) setSavingsData(res.data);
+      });
+
+      // Automatically dismiss banner after 7 seconds
+      setTimeout(() => {
+        setSimNotification(null);
+      }, 7000);
+    } catch (err) {
+      console.error("Simulation run error:", err);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
+  // Live fluctuation simulation tick (toggleable)
   useEffect(() => {
-    if (!isLiveSimulating) return;
+    if (!isLiveFluctuation) return;
 
     const interval = setInterval(() => {
       setServers((prevServers) =>
         prevServers.map((srv) => {
           if (srv.status.toLowerCase() === 'idle') return srv;
-          // Subtly fluctuate utilization +/- 1.5%
-          const delta = (Math.random() - 0.48) * 3;
-          const nextUtil = Math.min(99.5, Math.max(15, srv.current_utilization + delta));
-          const nextTemp = Math.min(72, Math.max(38, srv.temperature_c + (delta * 0.1)));
+          const delta = (Math.random() - 0.48) * 2.5;
+          const nextUtil = Math.min(98.0, Math.max(15.0, srv.current_utilization + delta));
           return {
             ...srv,
-            current_utilization: Number(nextUtil.toFixed(1)),
-            temperature_c: Number(nextTemp.toFixed(1))
+            current_utilization: Number(nextUtil.toFixed(1))
           };
         })
       );
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isLiveSimulating]);
+  }, [isLiveFluctuation]);
 
-  // Handle CPU click: toggle or select
+  // Handle CPU chip click: isolate selected CPU (100% opacity) while others dim to 20%
   const handleCpuClick = (server) => {
     if (selectedServerId === server.server_id) {
-      // If clicking already selected, deselect to restore all to 100%
       setSelectedServerId(null);
     } else {
       setSelectedServerId(server.server_id);
     }
   };
 
-  // Clear selection handler
   const handleClearSelection = () => {
     setSelectedServerId(null);
   };
@@ -107,7 +158,6 @@ export default function DashboardPage() {
           prev.map((s) => (s.server_id === serverId ? updated : s))
         );
       } else {
-        // Fallback local toggle if backend isn't reachable
         setServers((prev) =>
           prev.map((s) => {
             if (s.server_id === serverId) {
@@ -115,10 +165,9 @@ export default function DashboardPage() {
               return {
                 ...s,
                 status: newStatus,
-                current_utilization: newStatus === 'idle' ? 0.0 : 68.5,
-                active_workloads: newStatus === 'idle' ? 0 : 15,
-                temperature_c: newStatus === 'idle' ? 33.2 : 54.0,
-                power_draw_w: newStatus === 'idle' ? 70.0 : 340.0
+                current_utilization: newStatus === 'idle' ? 0.0 : 65.0,
+                active_workloads: newStatus === 'idle' ? 0 : 12,
+                flags: newStatus === 'idle' ? 'IDLE_CONSOLIDATED' : 'OPTIMAL_LOAD'
               };
             }
             return s;
@@ -132,10 +181,8 @@ export default function DashboardPage() {
     }
   };
 
-  // Selected server object
   const selectedServer = servers.find((s) => s.server_id === selectedServerId);
 
-  // Filtered servers (for grid view)
   const displayedServers = servers.filter((s) => {
     if (statusFilter === 'active') return s.status.toLowerCase() === 'active';
     if (statusFilter === 'idle') return s.status.toLowerCase() === 'idle';
@@ -149,175 +196,286 @@ export default function DashboardPage() {
       <StatsBar
         servers={servers}
         savingsData={savingsData}
+        latestSim={latestSim}
         onOpenEnergyModal={() => setIsEnergyModalOpen(true)}
       />
 
-      {/* 2. DASHBOARD CONTROL BAR */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
-        
-        {/* Left: View & Focus State Indicator */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Grid3X3 className="w-5 h-5 text-sky-600" />
-            <h2 className="text-base font-bold text-slate-800">
-              4×4 Virtual Compute Matrix (16 Nodes)
-            </h2>
+      {/* 2. SIMULATION SUCCESS BANNER (Triggered on simulation completion) */}
+      {simNotification && (
+        <div className="mb-6 p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border border-emerald-200/90 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-emerald-950 text-xs sm:text-sm">
+                  {simNotification.policy === 'dqn' ? 'DQN RL Agent' : 'Min-Min'} Simulation Complete ({simNotification.run_id})
+                </span>
+                <span className="text-[10px] font-mono bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-semibold">
+                  Saved: +{simNotification.saved_kwh} kWh ({simNotification.saved_pct}%)
+                </span>
+                {simNotification.policy === 'dqn' && (
+                  <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">
+                    SLA Violations: {simNotification.sla_violations}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-emerald-800 font-mono mt-0.5">
+                {simNotification.tasks} tasks mapped • Makespan: {simNotification.makespan}s • 4×4 CPU grid updated dynamically
+              </p>
+            </div>
           </div>
 
-          {selectedServerId ? (
-            <div className="flex items-center gap-2 px-2.5 py-1 bg-sky-50 border border-sky-200/80 rounded-lg text-xs font-mono text-sky-800 animate-fadeIn">
-              <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
-              <span>Isolated: <strong>{selectedServerId}</strong> (100% Opacity, Others 20%)</span>
+          <div className="flex items-center gap-2 self-end sm:self-center">
+            {activeView !== 'compare' && (
               <button
-                onClick={handleClearSelection}
-                className="ml-1 text-sky-600 hover:text-sky-900 underline font-semibold cursor-pointer"
+                onClick={() => setActiveView('compare')}
+                className="text-xs text-indigo-700 hover:text-indigo-900 underline font-semibold cursor-pointer font-mono"
               >
-                Reset
+                View Comparison →
+              </button>
+            )}
+            <button
+              onClick={() => setSimNotification(null)}
+              className="text-xs text-emerald-700 hover:text-emerald-900 underline font-semibold cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. SIMULATION CONFIGURATION SIDEBAR / PANEL */}
+      <div className="mb-6">
+        <SimulationControlPanel
+          onRunSimulation={handleRunSimulation}
+          isRunning={isSimulating}
+          latestSim={latestSim}
+        />
+      </div>
+
+      {/* 4. VIEW SELECTION TABS: 4x4 Matrix vs Compare Results */}
+      <div className="flex items-center justify-between mb-6 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setActiveView('matrix')}
+            id="tab-view-matrix"
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              activeView === 'matrix'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Grid3X3 className="w-4 h-4 text-sky-600" />
+            <span>4×4 Compute Matrix</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">
+              16 Sockets
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('compare')}
+            id="tab-view-compare"
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              activeView === 'compare'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-indigo-600" />
+            <span>Compare Results</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-200">
+              Min-Min vs DQN
+            </span>
+          </button>
+        </div>
+
+        <div className="hidden sm:flex items-center gap-2 pr-3 text-xs font-mono text-slate-500">
+          <span>{activeView === 'matrix' ? 'Real-Time Telemetry & Server Sockets' : 'Comparative Analytics & Graphs'}</span>
+        </div>
+      </div>
+
+      {/* CONDITIONAL VIEW RENDERING: 4x4 Matrix Grid vs Compare Results */}
+      {activeView === 'compare' ? (
+        <CompareResultsSection
+          onApplySimulationResult={(simData) => {
+            if (simData.servers && simData.servers.length > 0) {
+              setServers(simData.servers);
+            }
+            setLatestSim(simData);
+          }}
+        />
+      ) : (
+        <>
+          {/* 4. DASHBOARD CONTROL BAR */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
+            
+            {/* Left: Focus / Selection status */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Grid3X3 className="w-5 h-5 text-sky-600" />
+                <h2 className="text-base font-bold text-slate-800">
+                  4×4 Virtual Compute Matrix (16 Nodes)
+                </h2>
+              </div>
+
+              {selectedServerId ? (
+                <div className="flex items-center gap-2 px-2.5 py-1 bg-sky-50 border border-sky-200/80 rounded-lg text-xs font-mono text-sky-800 animate-fadeIn">
+                  <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+                  <span>Isolated: <strong>{selectedServerId}</strong> (100% Opacity, Others 20%)</span>
+                  <button
+                    onClick={handleClearSelection}
+                    className="ml-1 text-sky-600 hover:text-sky-900 underline font-semibold cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+              ) : (
+                <span className="hidden md:inline-flex text-xs text-slate-500 font-mono">
+                  (Click any CPU to isolate telemetry)
+                </span>
+              )}
+            </div>
+
+            {/* Right: Filters & Controls */}
+            <div className="flex items-center gap-2.5">
+              
+              {/* Status Filter Tabs */}
+              <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs font-medium">
+                <button
+                  onClick={() => setStatusFilter('all')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                    statusFilter === 'all'
+                      ? 'bg-white text-slate-900 font-semibold shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All (16)
+                </button>
+                <button
+                  onClick={() => setStatusFilter('active')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                    statusFilter === 'active'
+                      ? 'bg-white text-emerald-800 font-semibold shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  onClick={() => setStatusFilter('idle')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                    statusFilter === 'idle'
+                      ? 'bg-white text-slate-800 font-semibold shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Idle Sleep
+                </button>
+              </div>
+
+              {/* Live Fluctuation Toggle */}
+              <button
+                onClick={() => setIsLiveFluctuation(!isLiveFluctuation)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                  isLiveFluctuation
+                    ? 'bg-sky-50 border-sky-300 text-sky-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+                title="Toggle micro-fluctuation simulation"
+              >
+                {isLiveFluctuation ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Pause Pulse</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Micro Pulse</span>
+                  </>
+                )}
+              </button>
+
+              {/* Refresh Data */}
+              <button
+                onClick={loadData}
+                disabled={loading}
+                className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors cursor-pointer"
+                title="Reload from backend"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-sky-600' : ''}`} />
               </button>
             </div>
-          ) : (
-            <span className="hidden md:inline-flex text-xs text-slate-600 font-mono">
-              (Click any CPU to isolate)
-            </span>
-          )}
-        </div>
-
-        {/* Right: Filters & Controls */}
-        <div className="flex items-center gap-2.5">
-          
-          {/* Status Filter Tabs */}
-          <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs font-medium">
-            <button
-              onClick={() => setStatusFilter('all')}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                statusFilter === 'all'
-                  ? 'bg-white text-slate-900 font-semibold shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              All (16)
-            </button>
-            <button
-              onClick={() => setStatusFilter('active')}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                statusFilter === 'active'
-                  ? 'bg-white text-emerald-800 font-semibold shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Active
-            </button>
-            <button
-              onClick={() => setStatusFilter('idle')}
-              className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                statusFilter === 'idle'
-                  ? 'bg-white text-slate-800 font-semibold shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Idle Sleep
-            </button>
           </div>
 
-          {/* Live Simulation Toggle */}
-          <button
-            onClick={() => setIsLiveSimulating(!isLiveSimulating)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
-              isLiveSimulating
-                ? 'bg-sky-50 border-sky-300 text-sky-700'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-            }`}
-            title="Toggle live telemetry fluctuation simulation"
-          >
-            {isLiveSimulating ? (
-              <>
-                <Pause className="w-3.5 h-3.5 text-sky-600" />
-                <span>Pause Live</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-3.5 h-3.5 text-slate-500" />
-                <span>Simulate Live</span>
-              </>
-            )}
-          </button>
+          {/* 5. MAIN INTERACTIVE SECTION: 4x4 GRID + DETAIL PANEL */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* LEFT / MAIN AREA: 4x4 CPU GRID (8 cols out of 12) */}
+            <div className="lg:col-span-8 bg-white/70 backdrop-blur-sm rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
+              
+              <div className="flex items-center justify-between text-xs text-slate-500 mb-4 pb-2 border-b border-slate-100 font-mono">
+                <span>RACK-A (SRV 01-04) • RACK-B (05-08) • RACK-C (09-12) • RACK-D (13-16)</span>
+                <span className="hidden sm:inline">2D High-Density Socket Layout</span>
+              </div>
 
-          {/* Refresh Data */}
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors cursor-pointer"
-            title="Reload from backend"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-sky-600' : ''}`} />
-          </button>
-        </div>
-      </div>
+              {/* The 4x4 Neat Grid Layout with Dynamic Data Binding */}
+              <div 
+                id="cpu-matrix-grid"
+                className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4"
+              >
+                {displayedServers.map((server) => (
+                  <CpuChip
+                    key={server.server_id}
+                    server={server}
+                    isSelected={selectedServerId === server.server_id}
+                    hasSelection={selectedServerId !== null}
+                    onSelect={handleCpuClick}
+                  />
+                ))}
+              </div>
 
-      {/* 3. MAIN INTERACTIVE SECTION: 4x4 GRID + DETAIL PANEL */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* LEFT / MAIN AREA: 4x4 CPU GRID (8 cols out of 12) */}
-        <div className="lg:col-span-8 bg-white/70 backdrop-blur-sm rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
-          
-          {/* Rack Row Headers & Information */}
-          <div className="flex items-center justify-between text-xs text-slate-600 mb-4 pb-2 border-b border-slate-100 font-mono">
-            <span>RACK-A (SRV 01-04) • RACK-B (05-08) • RACK-C (09-12) • RACK-D (13-16)</span>
-            <span className="hidden sm:inline">2D High-Density Socket Layout</span>
-          </div>
+              {/* Color Legend */}
+              <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                  <span>Optimal Load (&lt;55%)</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block ml-2" />
+                  <span>Standard (55-80%)</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block ml-2" />
+                  <span>High (&gt;80%)</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-300 inline-block ml-2" />
+                  <span>Idle Sleep</span>
+                </div>
 
-          {/* The 4x4 Neat Grid Layout */}
-          <div 
-            id="cpu-matrix-grid"
-            className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4"
-          >
-            {displayedServers.map((server) => (
-              <CpuChip
-                key={server.server_id}
-                server={server}
-                isSelected={selectedServerId === server.server_id}
-                hasSelection={selectedServerId !== null}
-                onSelect={handleCpuClick}
-              />
-            ))}
-          </div>
-
-          {/* Helper Instructions below grid */}
-          <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 gap-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-              <span>Optimal Load (&lt;55%)</span>
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block ml-2" />
-              <span>Standard (55-85%)</span>
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block ml-2" />
-              <span>Heavy (&gt;85%)</span>
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-300 inline-block ml-2" />
-              <span>Idle</span>
+                <span className="font-mono text-[11px] text-slate-400">
+                  {selectedServerId ? `Focusing on ${selectedServerId}` : 'Click any CPU to isolate (others drop to 20% opacity)'}
+                </span>
+              </div>
             </div>
 
-            <span className="font-mono text-[11px] text-slate-600">
-              {selectedServerId ? `Focusing on ${selectedServerId}` : 'Hover or click any socket'}
-            </span>
+            {/* RIGHT AREA: DETAILED INFORMATION PANEL (4 cols out of 12) */}
+            <div className="lg:col-span-4 sticky top-20">
+              <ServerDetailPanel
+                server={selectedServer}
+                onClose={handleClearSelection}
+                onToggleStatus={handleToggleServerStatus}
+                isUpdating={isUpdating}
+              />
+            </div>
+
           </div>
-        </div>
+        </>
+      )}
 
-        {/* RIGHT AREA: DETAILED INFORMATION PANEL (4 cols out of 12) */}
-        <div className="lg:col-span-4 sticky top-20">
-          <ServerDetailPanel
-            server={selectedServer}
-            onClose={handleClearSelection}
-            onToggleStatus={handleToggleServerStatus}
-            isUpdating={isUpdating}
-          />
-        </div>
-
-      </div>
-
-      {/* 4. MODAL BREAKDOWN OF ENERGY SAVINGS */}
+      {/* 6. MODAL BREAKDOWN OF ENERGY SAVINGS */}
       <EnergySavingsModal
         isOpen={isEnergyModalOpen}
         onClose={() => setIsEnergyModalOpen(false)}
         savingsData={savingsData}
+        latestSim={latestSim}
       />
 
     </div>

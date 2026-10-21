@@ -185,19 +185,19 @@ export const FALLBACK_ENERGY_SAVINGS = {
   carbon_reduction_kg: 2041.4,
   pue_ratio: 1.15,
   idle_servers_consolidated: 4,
-  cooling_efficiency_boost_pct: 24.8,
+  cooling_efficiency_boost_pct: 26.4,
   breakdown: [
     {
-      category: "Idle Core Consolidation",
-      amount_kwh: 2041.4,
-      saved_usd: 285.8,
-      description: "Migrating workloads from 4 low-load nodes into power-managed sleep state"
+      category: "Idle Core Consolidation (Min-Min)",
+      amount_kwh: 2187.2,
+      saved_usd: 306.21,
+      description: "Consolidated workloads leaving idle nodes in low-power standby"
     },
     {
       category: "Dynamic Thermal Cooling Adjustment",
-      amount_kwh: 1701.2,
-      saved_usd: 238.16,
-      description: "AI-driven fan curve and CRAC chiller optimization using digital twin thermal map"
+      amount_kwh: 1555.4,
+      saved_usd: 217.75,
+      description: "AI-driven fan curve and CRAC chiller optimization"
     },
     {
       category: "Peak Shaving & Workload Balancing",
@@ -253,3 +253,128 @@ export async function toggleServerStatus(serverId) {
     return null;
   }
 }
+
+/**
+ * Triggers POST /api/simulations to run the Min-Min simulation engine
+ */
+export async function runSimulation({ num_tasks = 100, policy = 'min-min', seed = 42, num_steps = 15 }) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/simulations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        num_tasks: Number(num_tasks),
+        policy,
+        seed: Number(seed),
+        num_steps: Number(num_steps)
+      })
+    });
+    if (!res.ok) {
+      throw new Error(`Simulation request failed: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return { data, isBackendConnected: true };
+  } catch (err) {
+    console.warn("Backend simulation API offline, running synthetic client fallback:", err);
+    
+    // Client-side fallback simulation to ensure UI continues to function gracefully
+    const simId = `SIM-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const makespan = Math.round(80 + (num_tasks * 0.45));
+    const totalEnergy = Number((0.0035 * num_tasks).toFixed(4));
+    const baselineEnergy = Number((totalEnergy * 1.48).toFixed(4));
+    const energySaved = Number((baselineEnergy - totalEnergy).toFixed(4));
+
+    const simulatedServers = FALLBACK_16_SERVERS.map((srv, idx) => {
+      const isIdleNode = idx % 4 === 3 && num_tasks < 250;
+      const util = isIdleNode ? 0.0 : Math.min(95.0, Math.round(35 + (idx * 3.8 + (seed % 17)) % 52));
+      const activeWorkloads = isIdleNode ? 0 : Math.round(num_tasks / 12 + (idx % 3));
+      return {
+        ...srv,
+        current_utilization: util,
+        status: isIdleNode ? 'idle' : 'active',
+        active_workloads: activeWorkloads,
+        temperature_c: isIdleNode ? 32.0 : Math.round(30 + (util * 0.35)),
+        power_draw_w: isIdleNode ? 70.0 : Math.round(80 + (util * 3.4)),
+        avg_utilization: util,
+        energy_consumed_kwh: Number((totalEnergy / 14).toFixed(4)),
+        flags: isIdleNode ? 'IDLE_CONSOLIDATED' : util > 80 ? 'HOTSPOT_HIGH_LOAD' : 'OPTIMAL_LOAD'
+      };
+    });
+
+    const fallbackResponse = {
+      run_id: simId,
+      policy: policy,
+      parameters: { num_tasks, seed, num_steps },
+      total_tasks: num_tasks,
+      makespan_seconds: makespan,
+      total_energy_kwh: totalEnergy,
+      baseline_energy_kwh: baselineEnergy,
+      energy_saved_kwh: energySaved,
+      energy_saved_pct: 32.4,
+      cost_saved_usd: Number((energySaved * 0.14).toFixed(2)),
+      carbon_reduction_kg: Number((energySaved * 0.42).toFixed(2)),
+      pue_ratio: 1.15,
+      servers: simulatedServers,
+      server_stats: simulatedServers.map(s => ({
+        server_id: s.server_id,
+        avg_utilization: s.current_utilization,
+        energy_consumed: s.energy_consumed_kwh || 0.02,
+        total_tasks_assigned: s.active_workloads || 0,
+        flags: s.flags || ''
+      })),
+      step_metrics: []
+    };
+
+    return { data: fallbackResponse, isBackendConnected: false };
+  }
+}
+
+export async function fetchLatestSimulation() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/simulations/latest`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Retrieves comparative analysis between Min-Min and DQN
+ */
+export async function fetchComparison(params = {}) {
+  try {
+    const query = new URLSearchParams();
+    if (params.min_min_run_id) query.append('min_min_run_id', params.min_min_run_id);
+    if (params.dqn_run_id) query.append('dqn_run_id', params.dqn_run_id);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+
+    const res = await fetch(`${API_BASE_URL}/api/compare${qs}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn("Backend compare endpoint error, generating local comparison:", err);
+    return null;
+  }
+}
+
+/**
+ * Runs a head-to-head benchmark comparing Min-Min and DQN on the exact same task set
+ */
+export async function runComparativeBenchmark({ num_tasks = 100, seed = 42 }) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/compare/benchmark`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ num_tasks: Number(num_tasks), seed: Number(seed), num_steps: 15 })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn("Could not run benchmark on backend:", err);
+    return null;
+  }
+}
+
