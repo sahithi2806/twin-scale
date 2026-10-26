@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
+from config import SLA_DEADLINE_SLACK
+
 class ServerBase(BaseModel):
     server_id: str = Field(..., description="Unique server identifier e.g. SRV-01")
     capacity: str = Field(..., description="Hardware specification e.g. 64 vCPU / 256GB")
@@ -29,3 +31,5 @@ class SimulationRequest(BaseModel):
     policy: str = Field(default="min-min", description="Scheduling policy e.g. 'min-min'")
     seed: int = Field(default=42, description="Random seed for reproducible workload generation")
     num_steps: int = Field(default=15, ge=5, le=50, description="Number of discrete telemetry sampling steps")
+    sla_slack: float = Field(default=SLA_DEADLINE_SLACK, ge=1.0, le=10.0,
+                             description="Deadline = arrival + sla_slack * ideal execution time")

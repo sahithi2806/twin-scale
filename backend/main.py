@@ -170,7 +170,8 @@ def new_run_id() -> str:
 
 def run_engine(policy: str, params: Dict[str, Any], progress_cb=None) -> Dict[str, Any]:
     sim = SimulationEngine(get_all_servers()).run_simulation(
-        num_tasks=params["num_tasks"], policy=policy, seed=params["seed"], num_steps=params["num_steps"])
+        num_tasks=params["num_tasks"], policy=policy, seed=params["seed"], num_steps=params["num_steps"],
+        sla_slack=params["sla_slack"])
     return _legacy_to_result(sim)
 
 
@@ -188,7 +189,7 @@ def execute_run(run_id: str, policy: str, params: Dict[str, Any], update_servers
 @app.post("/api/simulations", status_code=status.HTTP_202_ACCEPTED)
 def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
     params = {"num_tasks": req.num_tasks, "seed": req.seed, "num_steps": req.num_steps,
-              "sleep_enabled": True, "sla_slack": 1.4}
+              "sleep_enabled": True, "sla_slack": req.sla_slack}
     run_id = new_run_id()
     create_run(run_id, req.policy, params)
     background_tasks.add_task(execute_run, run_id, req.policy, params)

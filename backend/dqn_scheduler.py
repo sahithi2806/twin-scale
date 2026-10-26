@@ -2,6 +2,7 @@ import numpy as np
 import random
 from typing import List, Dict, Any, Tuple
 from simulation import VirtualServer, Task
+from config import task_deadline, is_sla_violation
 
 class SimpleQNetwork:
     """
@@ -127,7 +128,7 @@ class DQNScheduler:
 
         return energy_penalty + overload_penalty + sla_penalty + consolidation_bonus
 
-    def schedule(self, tasks: List[Task], servers: List[VirtualServer]) -> Tuple[float, int, List[Dict[str, Any]]]:
+    def schedule(self, tasks: List[Task], servers: List[VirtualServer], sla_slack: float) -> Tuple[float, int, List[Dict[str, Any]]]:
         for s in servers:
             s.reset_state()
 
@@ -147,8 +148,7 @@ class DQNScheduler:
         }
 
         for task_idx, task in enumerate(tasks):
-            ideal_time = task.workload_mi / (task.vcpus * 2500.0)
-            sla_deadline = round(task.arrival_time + ideal_time * 1.5, 2)
+            sla_deadline = task_deadline(task.arrival_time, task.workload_mi, task.vcpus, sla_slack)
             state = self.extract_state(servers, task)
 
             q_values, _, _ = self.q_net.forward(state)
@@ -193,7 +193,7 @@ class DQNScheduler:
             ratio = active_cores / max(1, chosen_server.cores)
             new_util = min(88.0, max(28.0, ratio * 65.0 + 20.0))
 
-            is_sla_violated = finish_time > sla_deadline
+            is_sla_violated = is_sla_violation(finish_time, sla_deadline)
             if is_sla_violated:
                 sla_violations += 1
 

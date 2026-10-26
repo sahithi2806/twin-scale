@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Optional
 
+from config import SLA_DEADLINE_SLACK
+
 def analyze_simulation_metrics(
     sim_data: Dict[str, Any],
     task_records: Optional[List[Dict[str, Any]]] = None
@@ -86,7 +88,7 @@ def analyze_simulation_metrics(
             "sla_compliance_rate_pct": sla_compliance_rate,
             "average_latency_seconds": avg_latency,
             "max_latency_seconds": round(max_latency, 2),
-            "sla_threshold_factor": 1.4
+            "sla_threshold_factor": sim_data.get("parameters", {}).get("sla_slack", SLA_DEADLINE_SLACK)
         },
         "energy_impact": {
             "total_energy_kwh": total_energy_kwh,

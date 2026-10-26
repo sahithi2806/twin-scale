@@ -4,6 +4,8 @@ import uuid
 from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
 
+from config import SLA_DEADLINE_SLACK, task_deadline, is_sla_violation
+
 @dataclass
 class Task:
     task_id: str
@@ -136,7 +138,7 @@ class MinMinScheduler:
     Finds the minimum completion time across all unmapped tasks and assigns the smallest first.
     """
     @staticmethod
-    def schedule(tasks: List[Task], servers: List[VirtualServer]) -> Tuple[float, List[Dict[str, Any]]]:
+    def schedule(tasks: List[Task], servers: List[VirtualServer], sla_slack: float) -> Tuple[float, List[Dict[str, Any]]]:
         for s in servers:
             s.reset_state()
 
@@ -178,15 +180,14 @@ class MinMinScheduler:
             best_server.assigned_tasks.append(chosen_task)
             best_server.ready_time = round(best_completion_time, 2)
 
-            ideal = chosen_task.workload_mi / (chosen_task.vcpus * 2500.0)
-            deadline = round(chosen_task.arrival_time + ideal * 1.4, 2)
+            deadline = task_deadline(chosen_task.arrival_time, chosen_task.workload_mi, chosen_task.vcpus, sla_slack)
             task_records.append({
                 "task_id": chosen_task.task_id,
                 "server_id": best_server.server_id,
                 "start_time": chosen_task.start_time,
                 "finish_time": chosen_task.finish_time,
                 "deadline": deadline,
-                "sla_violated": chosen_task.finish_time > deadline
+                "sla_violated": is_sla_violation(chosen_task.finish_time, deadline)
             })
 
         makespan = max((s.ready_time for s in servers), default=1.0)
@@ -224,7 +225,8 @@ class SimulationEngine:
         num_tasks: int = 100,
         policy: str = "min-min",
         seed: int = 42,
-        num_steps: int = 15
+        num_steps: int = 15,
+        sla_slack: float = SLA_DEADLINE_SLACK
     ) -> Dict[str, Any]:
         normalized_policy = "dqn" if "dqn" in policy.lower() else "min-min"
         run_id = f"SIM-{normalized_policy.upper()}-{uuid.uuid4().hex[:6].upper()}"
@@ -236,9 +238,9 @@ class SimulationEngine:
         if normalized_policy == "dqn":
             from dqn_scheduler import DQNScheduler
             dqn = DQNScheduler(seed=seed)
-            makespan, sla_violations_count, task_records = dqn.schedule(tasks, self.servers)
+            makespan, sla_violations_count, task_records = dqn.schedule(tasks, self.servers, sla_slack)
         else:
-            makespan, task_records = MinMinScheduler.schedule(tasks, self.servers)
+            makespan, task_records = MinMinScheduler.schedule(tasks, self.servers, sla_slack)
             sla_violations_count = sum(1 for t in task_records if t["sla_violated"])
 
         if makespan <= 0:
