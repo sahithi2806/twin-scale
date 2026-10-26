@@ -49,3 +49,7 @@ IDLE_TIMEOUT_S = 10.0  # an awake server with no work goes to sleep after this l
 RL_W_ENERGY = 1.0
 RL_W_SLA = 2.0
 RL_W_OVERLOAD = 1.0
+
+# --- Analytics flags (per run, from server_stats) ---
+IDLE_FLAG_FRACTION = 0.8  # idle if asleep or awake-without-work for more than this share of the run
+OVERLOAD_FLAG_FRACTION = 0.2  # overloaded if above OVERLOAD_THRESHOLD for more than this share of the run

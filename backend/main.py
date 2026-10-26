@@ -17,11 +17,11 @@ from database import (
     save_run_results,
     get_run,
     get_latest_run,
-    get_comparison_runs,
     latest_comparison_id,
 )
 from schemas import Server, ServerUpdate, SimulationRequest, CompareRequest
-from evaluation import eval_seeds, summarize
+from evaluation import eval_seeds
+from analytics import comparison_summary, run_analytics
 from simulation import run_simulation
 from policies import POLICY_NAMES, get_policy, PolicyUnavailable
 
@@ -198,31 +198,13 @@ def get_simulation_details(run_id: str):
     sim = get_run(run_id, details=False)
     if sim and sim["status"] == "done":
         sim = get_run(run_id)
+        sim["analytics"] = run_analytics(run_id)
     if not sim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Simulation run '{run_id}' not found.")
     return sim
 
 
 # --- Multi-seed comparison ---
-
-def comparison_response(comparison_id: str) -> Optional[Dict[str, Any]]:
-    by_policy: Dict[str, List[Dict[str, Any]]] = {}
-    runs = get_comparison_runs(comparison_id)
-    for run in sorted(runs, key=lambda r: r["seed"]):
-        by_policy.setdefault(run["policy"], []).append(run)
-    if not by_policy:
-        return None
-    policies = [p for p in POLICY_NAMES if p in by_policy]
-    first = runs[0]["parameters"]
-    return {
-        "comparison_id": comparison_id,
-        "params": {k: first[k] for k in ("num_tasks", "sleep_enabled", "sla_slack", "arrival_rate")},
-        "seeds": sorted({r["seed"] for r in runs}),
-        "policies": policies,
-        "skipped": {p: "not part of this comparison" for p in POLICY_NAMES if p not in by_policy},
-        "summary": summarize({p: by_policy[p] for p in policies}),
-    }
-
 
 @app.post("/api/compare")
 def run_comparison(req: CompareRequest):
@@ -242,7 +224,7 @@ def run_comparison(req: CompareRequest):
             run_id = new_run_id()
             create_run(run_id, name, {**workload, "seed": seed}, comparison_id=comparison_id)
             save_run_results(run_id, run_simulation(servers, policy, seed=seed, **workload), update_servers=False)
-    response = comparison_response(comparison_id)
+    response = comparison_summary(comparison_id)
     response["skipped"] = skipped
     return response
 
@@ -252,7 +234,7 @@ def get_latest_comparison():
     comparison_id = latest_comparison_id()
     if not comparison_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No comparison yet. POST /api/compare first.")
-    return comparison_response(comparison_id)
+    return comparison_summary(comparison_id)
 
 
 @app.post("/api/servers/reset")

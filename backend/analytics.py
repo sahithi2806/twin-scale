@@ -1,262 +1,140 @@
-from typing import List, Dict, Any, Optional
+"""Analytics over persisted runs. Everything here reads from SQLite, never from in-memory engine objects."""
+import statistics
+from typing import Any, Dict, List, Optional
 
-from config import SLA_DEADLINE_SLACK
+import database
+from config import IDLE_FLAG_FRACTION, OVERLOAD_FLAG_FRACTION
+from evaluation import METRICS, summarize
+from policies import POLICY_NAMES
 
-def analyze_simulation_metrics(
-    sim_data: Dict[str, Any],
-    task_records: Optional[List[Dict[str, Any]]] = None
-) -> Dict[str, Any]:
-    """
-    Post-simulation analytics module:
-    - Identifies idle, optimal, and overloaded servers
-    - Calculates comparative energy savings vs baseline
-    - Performs comprehensive SLA impact analysis
-    """
-    servers = sim_data.get("servers", [])
-    step_metrics = sim_data.get("step_metrics", [])
-    server_stats = sim_data.get("server_stats", [])
+BASELINE = "min-min"
 
-    # 1. Categorize server operational profiles
-    idle_servers = []
-    overloaded_servers = []
-    optimal_servers = []
-    underutilized_servers = []
 
-    for s in servers:
-        util = s.get("current_utilization", 0.0)
-        tasks = s.get("active_workloads", 0)
-        srv_id = s.get("server_id")
+def _flags_for(stat: Dict[str, Any]) -> List[str]:
+    flags = []
+    if stat["sleep_fraction"] + stat["idle_fraction"] > IDLE_FLAG_FRACTION:
+        flags.append("idle")
+    if stat["overload_fraction"] > OVERLOAD_FLAG_FRACTION:
+        flags.append("overloaded")
+    return flags
 
-        if tasks == 0 or util == 0.0:
-            idle_servers.append(srv_id)
-        elif util > 82.0:
-            overloaded_servers.append(srv_id)
-        elif 40.0 <= util <= 82.0:
-            optimal_servers.append(srv_id)
-        else:
-            underutilized_servers.append(srv_id)
 
-    # 2. SLA Impact Analysis
-    total_tasks = sim_data.get("total_tasks", 100)
-    sla_violations = 0
-    total_latency = 0.0
-    max_latency = 0.0
+def flag_servers(run_id: str) -> Optional[List[Dict[str, Any]]]:
+    """Idle: asleep or awake-with-no-work for > IDLE_FLAG_FRACTION of the run.
+    Overloaded: above OVERLOAD_THRESHOLD utilization for > OVERLOAD_FLAG_FRACTION of the run."""
+    run = database.get_run(run_id)
+    if run is None:
+        return None
+    return [{
+        "server_id": s["server_id"],
+        "flags": _flags_for(s),
+        "avg_utilization": s["avg_utilization"],
+        "sleep_fraction": s["sleep_fraction"],
+        "idle_fraction": s["idle_fraction"],
+        "overload_fraction": s["overload_fraction"],
+    } for s in run["server_stats"]]
 
-    if task_records:
-        for t in task_records:
-            if t.get("sla_violated"):
-                sla_violations += 1
-            lat = max(0.0, t.get("finish_time", 0.0) - t.get("start_time", 0.0))
-            total_latency += lat
-            if lat > max_latency:
-                max_latency = lat
-    else:
-        # Infer SLA metrics from makespan and policy if granular task logs are summarized
-        policy = sim_data.get("policy", "min-min").lower()
-        if policy == "dqn":
-            sla_violations = max(1, int(total_tasks * 0.02))  # ~2% SLA violation with DQN
-        else:
-            sla_violations = max(3, int(total_tasks * 0.07))  # ~7% SLA violation with greedy Min-Min
-        total_latency = sim_data.get("makespan_seconds", 120.0) * total_tasks * 0.4
-        max_latency = sim_data.get("makespan_seconds", 120.0)
 
-    sla_violation_rate = round((sla_violations / max(1, total_tasks)) * 100.0, 1)
-    sla_compliance_rate = round(100.0 - sla_violation_rate, 1)
-    avg_latency = round(total_latency / max(1, total_tasks), 2)
-
-    # 3. Energy and cost savings
-    total_energy_kwh = sim_data.get("total_energy_kwh", 0.0)
-    baseline_energy_kwh = sim_data.get("baseline_energy_kwh", 0.0)
-    energy_saved_kwh = round(max(0.0, baseline_energy_kwh - total_energy_kwh), 4)
-    energy_saved_pct = round((energy_saved_kwh / max(0.001, baseline_energy_kwh)) * 100.0, 1)
-
+def run_analytics(run_id: str) -> Optional[Dict[str, Any]]:
+    servers = flag_servers(run_id)
+    if servers is None:
+        return None
     return {
-        "server_classification": {
-            "idle_servers": idle_servers,
-            "idle_count": len(idle_servers),
-            "overloaded_servers": overloaded_servers,
-            "overloaded_count": len(overloaded_servers),
-            "optimal_servers": optimal_servers,
-            "optimal_count": len(optimal_servers),
-            "underutilized_servers": underutilized_servers,
-            "underutilized_count": len(underutilized_servers)
-        },
-        "sla_analysis": {
-            "total_tasks_evaluated": total_tasks,
-            "sla_violations_count": sla_violations,
-            "sla_violation_rate_pct": sla_violation_rate,
-            "sla_compliance_rate_pct": sla_compliance_rate,
-            "average_latency_seconds": avg_latency,
-            "max_latency_seconds": round(max_latency, 2),
-            "sla_threshold_factor": sim_data.get("parameters", {}).get("sla_slack", SLA_DEADLINE_SLACK)
-        },
-        "energy_impact": {
-            "total_energy_kwh": total_energy_kwh,
-            "baseline_energy_kwh": baseline_energy_kwh,
-            "energy_saved_kwh": energy_saved_kwh,
-            "energy_saved_pct": energy_saved_pct,
-            "cost_saved_usd": round(energy_saved_kwh * 0.14, 2),
-            "carbon_offset_kg": round(energy_saved_kwh * 0.42, 2)
-        }
+        "server_flags": servers,
+        "idle_servers": [s["server_id"] for s in servers if "idle" in s["flags"]],
+        "overloaded_servers": [s["server_id"] for s in servers if "overloaded" in s["flags"]],
     }
 
 
-def format_comparative_analysis(min_min_sim: Dict[str, Any], dqn_sim: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Produces a direct comparative report between Min-Min (Baseline) and DQN (AI):
-    - Energy Consumption & Savings
-    - Total Completion Time (Makespan)
-    - Average CPU Utilization
-    - SLA Violations & Compliance
-    - 16-Server Node Distribution Table
-    - Time-series step progression
-    """
-    min_analytics = analyze_simulation_metrics(min_min_sim)
-    dqn_analytics = analyze_simulation_metrics(dqn_sim)
+def _mean(values: List[float]) -> float:
+    return statistics.fmean(values) if values else 0.0
 
-    # Energy calculations
-    min_energy = min_min_sim.get("total_energy_kwh", 0.0)
-    dqn_energy = dqn_sim.get("total_energy_kwh", 0.0)
-    energy_diff = round(min_energy - dqn_energy, 4)
-    energy_pct_improvement = round((energy_diff / max(0.001, min_energy)) * 100.0, 1)
 
-    # Makespan calculations
-    min_makespan = min_min_sim.get("makespan_seconds", 0.0)
-    dqn_makespan = dqn_sim.get("makespan_seconds", 0.0)
-    makespan_diff = round(min_makespan - dqn_makespan, 2)
+def comparison_summary(comparison_id: str) -> Optional[Dict[str, Any]]:
+    runs = database.get_comparison_runs(comparison_id)
+    if not runs:
+        return None
+    by_policy: Dict[str, List[Dict[str, Any]]] = {}
+    for run in sorted(runs, key=lambda r: r["seed"]):
+        by_policy.setdefault(run["policy"], []).append(run)
+    policies = [p for p in POLICY_NAMES if p in by_policy]
+    by_policy = {p: by_policy[p] for p in policies}
+    seeds = sorted({r["seed"] for r in runs})
+    first = runs[0]
 
-    # CPU Utilization calculations
-    min_servers = min_min_sim.get("servers", [])
-    dqn_servers = dqn_sim.get("servers", [])
-    min_avg_util = round(sum(s.get("current_utilization", 0) for s in min_servers) / max(1, len(min_servers)), 1)
-    dqn_avg_util = round(sum(s.get("current_utilization", 0) for s in dqn_servers) / max(1, len(dqn_servers)), 1)
+    summary = summarize(by_policy, baseline=BASELINE)
 
-    # SLA Violation calculations
-    min_sla_viol = min_analytics["sla_analysis"]["sla_violations_count"]
-    dqn_sla_viol = dqn_analytics["sla_analysis"]["sla_violations_count"]
+    per_server: Dict[str, List[Dict[str, Any]]] = {}
+    server_flags: Dict[str, Dict[str, Any]] = {}
+    for policy, policy_runs in by_policy.items():
+        stats_by_server: Dict[str, List[Dict[str, Any]]] = {}
+        idle_counts, overload_counts = [], []
+        for run in policy_runs:
+            flagged = [_flags_for(s) for s in run["server_stats"]]
+            idle_counts.append(sum("idle" in f for f in flagged))
+            overload_counts.append(sum("overloaded" in f for f in flagged))
+            for s in run["server_stats"]:
+                stats_by_server.setdefault(s["server_id"], []).append(s)
+        per_server[policy] = [{
+            "server_id": sid,
+            "energy_kwh": _mean([s["energy_kwh"] for s in rows]),
+            "avg_utilization": _mean([s["avg_utilization"] for s in rows]),
+            "sleep_fraction": _mean([s["sleep_fraction"] for s in rows]),
+            "tasks_assigned": _mean([s["tasks_assigned"] for s in rows]),
+            "idle_in_runs": sum("idle" in _flags_for(s) for s in rows),
+            "overloaded_in_runs": sum("overloaded" in _flags_for(s) for s in rows),
+        } for sid, rows in sorted(stats_by_server.items())]
+        server_flags[policy] = {"mean_idle_servers": _mean(idle_counts),
+                                "mean_overloaded_servers": _mean(overload_counts)}
 
-    # Server-by-Server Comparative Table (all 16 nodes)
-    server_comparison = []
-    dqn_srv_map = {s["server_id"]: s for s in dqn_servers}
-
-    for s_min in min_servers:
-        srv_id = s_min["server_id"]
-        s_dqn = dqn_srv_map.get(srv_id, {})
-
-        server_comparison.append({
-            "server_id": srv_id,
-            "capacity": s_min.get("capacity", "64 vCPU"),
-            "rack_id": s_min.get("rack_id", "RACK-A1"),
-            "min_min_util": s_min.get("current_utilization", 0.0),
-            "dqn_util": s_dqn.get("current_utilization", 0.0),
-            "min_min_tasks": s_min.get("active_workloads", 0),
-            "dqn_tasks": s_dqn.get("active_workloads", 0),
-            "min_min_energy_kwh": s_min.get("energy_consumed_kwh", 0.0),
-            "dqn_energy_kwh": s_dqn.get("energy_consumed_kwh", 0.0),
-            "min_min_status": s_min.get("status", "active"),
-            "dqn_status": s_dqn.get("status", "active"),
-            "min_min_flag": s_min.get("flags", "OPTIMAL"),
-            "dqn_flag": s_dqn.get("flags", "OPTIMAL")
-        })
-
-    # Step Metrics Time-Series alignment
-    min_steps = min_min_sim.get("step_metrics", [])
-    dqn_steps = dqn_sim.get("step_metrics", [])
-    step_comparison = []
-
-    # Aggregate by step index
-    min_by_step = {}
-    for sm in min_steps:
-        st = sm.get("step", 1)
-        if st not in min_by_step:
-            min_by_step[st] = {"utils": [], "energy": 0.0, "time": sm.get("timestamp", 0.0)}
-        min_by_step[st]["utils"].append(sm.get("utilization", 0.0))
-        min_by_step[st]["energy"] += sm.get("energy", 0.0)
-
-    dqn_by_step = {}
-    for sm in dqn_steps:
-        st = sm.get("step", 1)
-        if st not in dqn_by_step:
-            dqn_by_step[st] = {"utils": [], "energy": 0.0, "time": sm.get("timestamp", 0.0)}
-        dqn_by_step[st]["utils"].append(sm.get("utilization", 0.0))
-        dqn_by_step[st]["energy"] += sm.get("energy", 0.0)
-
-    all_steps = sorted(set(list(min_by_step.keys()) + list(dqn_by_step.keys())))
-    for st in all_steps:
-        m_data = min_by_step.get(st, {"utils": [0], "energy": 0, "time": st * 10})
-        d_data = dqn_by_step.get(st, {"utils": [0], "energy": 0, "time": st * 10})
-
-        m_avg = round(sum(m_data["utils"]) / max(1, len(m_data["utils"])), 1)
-        d_avg = round(sum(d_data["utils"]) / max(1, len(d_data["utils"])), 1)
-
-        step_comparison.append({
-            "step": st,
-            "timestamp": m_data["time"],
-            "min_min_avg_util": m_avg,
-            "dqn_avg_util": d_avg,
-            "min_min_energy": round(m_data["energy"], 4),
-            "dqn_energy": round(d_data["energy"], 4)
-        })
+    base_sla = summary[BASELINE]["sla_violations"]["mean"] if BASELINE in summary else None
+    sla_impact = {
+        p: {
+            "mean_violations": summary[p]["sla_violations"]["mean"],
+            "violation_rate_pct": 100.0 * summary[p]["sla_violations"]["mean"] / max(1, first["num_tasks"]),
+            "delta_vs_baseline": None if base_sla is None else summary[p]["sla_violations"]["mean"] - base_sla,
+        } for p in policies
+    }
 
     return {
-        "metadata": {
-            "min_min_run_id": min_min_sim.get("run_id"),
-            "dqn_run_id": dqn_sim.get("run_id"),
-            "total_tasks": min_min_sim.get("total_tasks", 100),
-            "seed": min_min_sim.get("parameters", {}).get("seed", 42)
-        },
-        "kpis": {
-            "energy_consumption": {
-                "metric": "Energy Consumption (kWh)",
-                "min_min": min_energy,
-                "dqn": dqn_energy,
-                "difference": energy_diff,
-                "percent_reduction": energy_pct_improvement,
-                "winner": "DQN" if dqn_energy < min_energy else "Min-Min"
-            },
-            "energy_saved": {
-                "metric": "Energy Saved vs Baseline (kWh)",
-                "min_min": min_min_sim.get("energy_saved_kwh", 0.0),
-                "dqn": dqn_sim.get("energy_saved_kwh", 0.0),
-                "winner": "DQN" if dqn_sim.get("energy_saved_kwh", 0) > min_min_sim.get("energy_saved_kwh", 0) else "Min-Min"
-            },
-            "completion_time": {
-                "metric": "Makespan / Completion Time (s)",
-                "min_min": min_makespan,
-                "dqn": dqn_makespan,
-                "difference": makespan_diff,
-                "winner": "DQN" if dqn_makespan < min_makespan else "Min-Min"
-            },
-            "avg_cpu_utilization": {
-                "metric": "Average CPU Utilization (%)",
-                "min_min": min_avg_util,
-                "dqn": dqn_avg_util,
-                "winner": "DQN"
-            },
-            "sla_violations": {
-                "metric": "SLA Violations (Tasks)",
-                "min_min": min_sla_viol,
-                "dqn": dqn_sla_viol,
-                "difference": min_sla_viol - dqn_sla_viol,
-                "min_min_rate_pct": min_analytics["sla_analysis"]["sla_violation_rate_pct"],
-                "dqn_rate_pct": dqn_analytics["sla_analysis"]["sla_violation_rate_pct"],
-                "winner": "DQN" if dqn_sla_viol <= min_sla_viol else "Min-Min"
-            },
-            "idle_servers_consolidated": {
-                "metric": "Idle Sleep Servers",
-                "min_min": min_analytics["server_classification"]["idle_count"],
-                "dqn": dqn_analytics["server_classification"]["idle_count"],
-                "winner": "DQN" if dqn_analytics["server_classification"]["idle_count"] >= min_analytics["server_classification"]["idle_count"] else "Min-Min"
-            }
-        },
-        "server_distribution": server_comparison,
-        "timeseries_progression": step_comparison,
-        "min_min_analytics": min_analytics,
-        "dqn_analytics": dqn_analytics,
-        "executive_summary": (
-            f"The Deep Q-Network (DQN) scheduler reduced total energy consumption by {energy_pct_improvement}% "
-            f"compared to Min-Min, saving +{energy_diff} kWh through intelligent workload consolidation. "
-            f"DQN maintained {dqn_analytics['sla_analysis']['sla_compliance_rate_pct']}% SLA compliance "
-            f"while safely keeping {dqn_analytics['server_classification']['idle_count']} idle nodes in low-power sleep."
-        )
+        "comparison_id": comparison_id,
+        "created_at": min(r["created_at"] for r in runs),
+        "params": {k: first["parameters"][k] for k in ("num_tasks", "sleep_enabled", "sla_slack", "arrival_rate")},
+        "seeds": seeds,
+        "policies": policies,
+        "skipped": {p: "not run in this comparison (DQN weights were unavailable)" for p in POLICY_NAMES
+                    if p not in by_policy},
+        "metrics": list(METRICS),
+        "summary": summary,
+        "per_server": per_server,
+        "server_flags": server_flags,
+        "sla_impact": sla_impact,
+        "energy_saving": energy_saving(summary, per_server, sla_impact, "dqn"),
+    }
+
+
+def energy_saving(summary, per_server, sla_impact, policy: str) -> Optional[Dict[str, Any]]:
+    """`policy` vs Min-Min: absolute and % energy saving, per-server breakdown, and the SLA cost of the saving."""
+    if policy not in summary or BASELINE not in summary:
+        return None
+    base_kwh = summary[BASELINE]["total_energy_kwh"]["mean"]
+    pol_kwh = summary[policy]["total_energy_kwh"]["mean"]
+    base_servers = {s["server_id"]: s for s in per_server[BASELINE]}
+    return {
+        "policy": policy,
+        "baseline": BASELINE,
+        "baseline_kwh": base_kwh,
+        "policy_kwh": pol_kwh,
+        "saved_kwh": base_kwh - pol_kwh,
+        "saved_pct": summary[policy]["vs_baseline_pct"]["total_energy_kwh"],
+        "sla_violations_baseline": summary[BASELINE]["sla_violations"]["mean"],
+        "sla_violations_policy": summary[policy]["sla_violations"]["mean"],
+        "sla_cost": sla_impact[policy]["delta_vs_baseline"],
+        "per_server": [{
+            "server_id": s["server_id"],
+            "baseline_kwh": base_servers[s["server_id"]]["energy_kwh"],
+            "policy_kwh": s["energy_kwh"],
+            "saved_kwh": base_servers[s["server_id"]]["energy_kwh"] - s["energy_kwh"],
+            "policy_sleep_fraction": s["sleep_fraction"],
+        } for s in per_server[policy]],
     }
