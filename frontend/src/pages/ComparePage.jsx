@@ -56,6 +56,7 @@ function MetricChart({ metric, policies, summary }) {
             <CartesianGrid vertical={false} stroke="#e2e8f0" />
             <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: '#cbd5e1' }} tick={{ fontSize: 11, fill: '#475569' }} />
             <YAxis tickLine={false} axisLine={false} width={56} tick={{ fontSize: 11, fill: '#64748b' }}
+              domain={[0, 'auto']} allowDataOverflow
               tickFormatter={(v) => Number(v).toFixed(metric.digits > 2 ? 3 : 0)} />
             <Tooltip cursor={{ fill: '#f1f5f9' }} content={<MetricTooltip metric={metric} />} />
             <Bar dataKey="mean" radius={[4, 4, 0, 0]} isAnimationActive={false}>
