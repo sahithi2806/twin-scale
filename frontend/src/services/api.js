@@ -293,6 +293,12 @@ export async function runSimulation(params, onProgress = () => {}) {
   }
 }
 
+export async function fetchPolicies() {
+  const res = await fetch(`${API_BASE_URL}/api/policies`);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export async function fetchLatestSimulation() {
   try {
     const res = await fetch(`${API_BASE_URL}/api/simulations/latest`);

@@ -4,6 +4,7 @@ import {
   fetchEnergySavings, 
   toggleServerStatus, 
   runSimulation,
+  fetchPolicies,
   fetchLatestSimulation,
   FALLBACK_16_SERVERS, 
   FALLBACK_ENERGY_SAVINGS 
@@ -45,10 +46,12 @@ export default function DashboardPage() {
   const [simNotification, setSimNotification] = useState(null);
   const [simProgress, setSimProgress] = useState(null);
   const [simError, setSimError] = useState(null);
+  const [policyStatus, setPolicyStatus] = useState(null);
 
   // Load servers, savings, and latest simulation on initial mount
   const loadData = async () => {
     setLoading(true);
+    fetchPolicies().then(setPolicyStatus).catch(() => setPolicyStatus(null));
     try {
       const [serversRes, savingsRes, latestSimRes] = await Promise.all([
         fetchServers(),
@@ -241,6 +244,7 @@ export default function DashboardPage() {
       <div className="mb-6">
         <SimulationControlPanel
           onRunSimulation={handleRunSimulation}
+          policyStatus={policyStatus}
           isRunning={isSimulating}
           progress={simProgress}
           latestSim={latestSim}

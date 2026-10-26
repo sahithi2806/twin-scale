@@ -167,6 +167,19 @@ def execute_run(run_id: str, policy: str, params: Dict[str, Any], update_servers
         set_run_status(run_id, "failed", error=f"{type(exc).__name__}: {exc}")
 
 
+@app.get("/api/policies")
+def list_policies():
+    """Which schedulers can run right now (DQN needs trained weights)."""
+    status_by_policy = {}
+    for name in POLICY_NAMES:
+        try:
+            get_policy(name)
+            status_by_policy[name] = {"available": True, "reason": None}
+        except PolicyUnavailable as exc:
+            status_by_policy[name] = {"available": False, "reason": str(exc)}
+    return status_by_policy
+
+
 @app.post("/api/simulations", status_code=status.HTTP_202_ACCEPTED)
 def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
     ensure_policy_available(req.policy)

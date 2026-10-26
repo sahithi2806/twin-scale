@@ -1,26 +1,27 @@
 import React, { useState } from 'react';
-import { 
-  Play, 
-  RefreshCw, 
-  Cpu, 
-  Sliders, 
-  Dices, 
-  CheckCircle2, 
-  Zap, 
-  Clock, 
-  Layers,
-  Sparkles
-} from 'lucide-react';
+import { Play, RefreshCw, Sliders, Dices, CheckCircle2, Clock, Layers, Moon } from 'lucide-react';
+
+const SCHEDULERS = [
+  { id: 'min-min', label: 'Min-Min', tag: 'Baseline',
+    description: 'Greedy earliest-completion placement; spreads load across servers.' },
+  { id: 'power-aware', label: 'Power-aware', tag: 'Heuristic',
+    description: 'Best-fit consolidation onto awake servers; wakes the most efficient sleeper only when needed.' },
+  { id: 'dqn', label: 'DQN', tag: 'RL',
+    description: 'Trained Q-network; reward = -(energy + SLA penalty + overload penalty).' }
+];
 
 export default function SimulationControlPanel({
   onRunSimulation,
   isRunning,
   progress,
-  latestSim
+  latestSim,
+  policyStatus
 }) {
   const [numTasks, setNumTasks] = useState(100);
   const [seed, setSeed] = useState(42);
   const [policy, setPolicy] = useState('min-min');
+  const [sleepEnabled, setSleepEnabled] = useState(true);
+  const [slaSlack, setSlaSlack] = useState(1.5);
 
   const handleStart = (e) => {
     e.preventDefault();
@@ -28,7 +29,9 @@ export default function SimulationControlPanel({
     onRunSimulation({
       num_tasks: numTasks,
       policy,
-      seed
+      seed,
+      sleep_enabled: sleepEnabled,
+      sla_slack: slaSlack
     });
   };
 
@@ -57,13 +60,13 @@ export default function SimulationControlPanel({
                 Sprint 3
               </span>
             </h3>
-            <p className="text-xs text-slate-500">Configure synthetic workload and choose Min-Min or DQN scheduler</p>
+            <p className="text-xs text-slate-500">Configure the synthetic workload and choose a scheduler</p>
           </div>
         </div>
 
         <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/80">
-          <span className={`w-1.5 h-1.5 rounded-full ${policy === 'dqn' ? 'bg-indigo-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
-          <span>Active: {policy === 'dqn' ? 'DQN Agent' : 'Min-Min'}</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Selected: {SCHEDULERS.find((o) => o.id === policy)?.label}</span>
         </div>
       </div>
 
@@ -75,62 +78,65 @@ export default function SimulationControlPanel({
           <label className="block text-xs font-bold text-slate-700 mb-2">
             Select Scheduling Policy (POST /api/simulations)
           </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            
-            {/* Option 1: Min-Min */}
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => !isRunning && setPolicy('min-min')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setPolicy('min-min'); }}
-              className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
-                policy === 'min-min'
-                  ? 'border-sky-500 bg-sky-50/60 shadow-xs'
-                  : 'border-slate-200 bg-slate-50 hover:bg-slate-100/60'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${policy === 'min-min' ? 'bg-sky-600' : 'bg-slate-400'}`} />
-                  Min-Min (Baseline)
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-200/70 text-slate-700 rounded font-medium">
-                  Heuristic
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1 leading-snug">
-                Greedy makespan minimization heuristic. Fast but distributes jobs across all nodes without thermal/energy constraints.
-              </p>
-            </div>
-
-            {/* Option 2: DQN */}
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => !isRunning && setPolicy('dqn')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setPolicy('dqn'); }}
-              className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
-                policy === 'dqn'
-                  ? 'border-indigo-500 bg-indigo-50/60 shadow-xs'
-                  : 'border-slate-200 bg-slate-50 hover:bg-slate-100/60'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${policy === 'dqn' ? 'bg-indigo-600' : 'bg-slate-400'}`} />
-                  Deep Q-Network (DQN)
-                </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded font-semibold flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 text-indigo-600" />
-                  RL AI
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1 leading-snug">
-                Reinforcement learning agent trained with reward = - (Energy + Overload Penalty + SLA Penalty) with idle sleep consolidation.
-              </p>
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="radiogroup" aria-label="Scheduling policy">
+            {SCHEDULERS.map((opt) => {
+              const availability = policyStatus?.[opt.id];
+              const unavailable = availability && !availability.available;
+              const active = policy === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  id={`policy-${opt.id}`}
+                  disabled={isRunning || unavailable}
+                  onClick={() => setPolicy(opt.id)}
+                  title={unavailable ? availability.reason : undefined}
+                  className={`text-left p-3 rounded-2xl border-2 transition-all flex flex-col justify-between ${
+                    unavailable
+                      ? 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed'
+                      : active
+                        ? 'border-sky-500 bg-sky-50/60 shadow-xs cursor-pointer'
+                        : 'border-slate-200 bg-slate-50 hover:bg-slate-100/60 cursor-pointer'
+                  }`}
+                >
+                  <span className="flex items-center justify-between w-full">
+                    <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${active ? 'bg-sky-600' : 'bg-slate-400'}`} />
+                      {opt.label}
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-200/70 text-slate-700 rounded font-medium">
+                      {opt.tag}
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-slate-500 mt-1 leading-snug">
+                    {unavailable ? 'Train first: python train_dqn.py' : opt.description}
+                  </span>
+                </button>
+              );
+            })}
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <label className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 cursor-pointer">
+            <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+              <Moon className="w-4 h-4 text-indigo-500" />
+              Idle servers may sleep
+            </span>
+            <input type="checkbox" id="sleep-toggle" checked={sleepEnabled} disabled={isRunning}
+              onChange={(e) => setSleepEnabled(e.target.checked)} className="accent-sky-600 w-4 h-4" />
+          </label>
+          <label className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+            <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+              <Clock className="w-4 h-4 text-amber-600" />
+              SLA deadline slack (× ideal runtime)
+            </span>
+            <input type="number" id="sla-slack-input" min="1" max="10" step="0.1" value={slaSlack} disabled={isRunning}
+              onChange={(e) => setSlaSlack(Number(e.target.value))}
+              className="w-20 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+          </label>
         </div>
 
         {/* Task Count Slider & Presets */}
@@ -214,20 +220,18 @@ export default function SimulationControlPanel({
           className={`w-full py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 transition-all shadow-md cursor-pointer ${
             isRunning
               ? 'bg-sky-400 text-white cursor-wait'
-              : policy === 'dqn'
-                ? 'bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white hover:shadow-lg active:scale-[0.99]'
-                : 'bg-gradient-to-r from-sky-600 to-teal-600 hover:from-sky-500 hover:to-teal-500 text-white hover:shadow-lg active:scale-[0.99]'
+              : 'bg-gradient-to-r from-sky-600 to-teal-600 hover:from-sky-500 hover:to-teal-500 text-white hover:shadow-lg active:scale-[0.99]'
           }`}
         >
           {isRunning ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin text-white" />
-              <span>Executing {policy === 'dqn' ? 'DQN RL Agent' : 'Min-Min Scheduler'}...</span>
+              <span>Running {SCHEDULERS.find((o) => o.id === policy)?.label}…</span>
             </>
           ) : (
             <>
               <Play className="w-4 h-4 fill-white text-white" />
-              <span>Run Simulation ({policy === 'dqn' ? 'DQN Agent' : 'Min-Min'})</span>
+              <span>Run Simulation ({SCHEDULERS.find((o) => o.id === policy)?.label})</span>
             </>
           )}
         </button>

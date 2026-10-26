@@ -47,3 +47,11 @@ def test_request_never_trains(tmp_path, monkeypatch):
     result = run_simulation(INITIAL_16_SERVERS, policy, num_tasks=40, seed=1000)
     again = run_simulation(INITIAL_16_SERVERS, policies.get_policy("dqn"), num_tasks=40, seed=1000)
     assert result == again
+
+
+def test_policies_endpoint_reports_dqn_availability(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCTWIN_DQN_WEIGHTS", str(tmp_path / "nope.pt"))
+    with TestClient(main.app) as client:
+        body = client.get("/api/policies").json()
+    assert body["min-min"]["available"] and body["power-aware"]["available"]
+    assert not body["dqn"]["available"] and "train_dqn.py" in body["dqn"]["reason"]
