@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
 import DashboardPage from './pages/DashboardPage';
+import ComparePage from './pages/ComparePage';
 import EnergySavingsModal from './components/EnergySavingsModal';
 import { fetchEnergySavings } from './services/api';
 
@@ -39,6 +40,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/compare" element={<ComparePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

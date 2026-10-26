@@ -1,10 +1,11 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Cpu, Server, Zap, Activity } from 'lucide-react';
+import { Cpu, Zap, Activity, BarChart3 } from 'lucide-react';
 
 export default function Navbar({ onOpenEnergyModal, isBackendConnected }) {
   const location = useLocation();
   const isDashboard = location.pathname === '/dashboard';
+  const isCompare = location.pathname === '/compare';
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
@@ -33,7 +34,7 @@ export default function Navbar({ onOpenEnergyModal, isBackendConnected }) {
           <Link
             to="/"
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              !isDashboard 
+              !isDashboard && !isCompare
                 ? 'text-sky-700 bg-sky-50/80 font-semibold' 
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
             }`}
@@ -51,6 +52,19 @@ export default function Navbar({ onOpenEnergyModal, isBackendConnected }) {
           >
             <Activity className="w-4 h-4" />
             <span>CPU Dashboard</span>
+          </Link>
+
+          <Link
+            to="/compare"
+            id="nav-compare"
+            className={`px-3.5 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
+              isCompare
+                ? 'text-white bg-sky-600 shadow-xs font-semibold'
+                : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/70'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Compare Results</span>
           </Link>
 
           {/* Backend Status indicator */}

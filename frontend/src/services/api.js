@@ -309,40 +309,19 @@ export async function fetchLatestSimulation() {
   }
 }
 
-/**
- * Retrieves comparative analysis between Min-Min and DQN
- */
-export async function fetchComparison(params = {}) {
-  try {
-    const query = new URLSearchParams();
-    if (params.min_min_run_id) query.append('min_min_run_id', params.min_min_run_id);
-    if (params.dqn_run_id) query.append('dqn_run_id', params.dqn_run_id);
-    const qs = query.toString() ? `?${query.toString()}` : '';
-
-    const res = await fetch(`${API_BASE_URL}/api/compare${qs}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.warn("Backend compare endpoint error, generating local comparison:", err);
-    return null;
-  }
+export async function runComparison(params) {
+  const res = await fetch(`${API_BASE_URL}/api/compare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }
 
-/**
- * Runs a head-to-head benchmark comparing Min-Min and DQN on the exact same task set
- */
-export async function runComparativeBenchmark({ num_tasks = 100, seed = 42 }) {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/compare/benchmark`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ num_tasks: Number(num_tasks), seed: Number(seed), num_steps: 15 })
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.warn("Could not run benchmark on backend:", err);
-    return null;
-  }
+export async function fetchLatestComparison() {
+  const res = await fetch(`${API_BASE_URL}/api/compare/latest`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }
-

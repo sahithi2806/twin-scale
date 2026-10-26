@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   fetchServers, 
   fetchEnergySavings, 
@@ -15,7 +16,6 @@ import CpuChip from '../components/CpuChip';
 import ServerDetailPanel from '../components/ServerDetailPanel';
 import EnergySavingsModal from '../components/EnergySavingsModal';
 import SimulationControlPanel from '../components/SimulationControlPanel';
-import CompareResultsSection from '../components/CompareResultsSection';
 
 import { 
   RefreshCw, 
@@ -27,12 +27,10 @@ import {
   Sliders, 
   Clock,
   Sparkles,
-  Info,
-  BarChart3
+  Info
 } from 'lucide-react';
 
 export default function DashboardPage() {
-  const [activeView, setActiveView] = useState('matrix'); // 'matrix' | 'compare'
   const [servers, setServers] = useState([]);
   const [savingsData, setSavingsData] = useState(null);
   const [latestSim, setLatestSim] = useState(null);
@@ -215,14 +213,9 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-center">
-            {activeView !== 'compare' && (
-              <button
-                onClick={() => setActiveView('compare')}
-                className="text-xs text-indigo-700 hover:text-indigo-900 underline font-semibold cursor-pointer font-mono"
-              >
-                View Comparison →
-              </button>
-            )}
+            <Link to="/compare" className="text-xs text-indigo-700 hover:text-indigo-900 underline font-semibold font-mono">
+              Compare schedulers →
+            </Link>
             <button
               onClick={() => setSimNotification(null)}
               className="text-xs text-emerald-700 hover:text-emerald-900 underline font-semibold cursor-pointer"
@@ -251,59 +244,6 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* 4. VIEW SELECTION TABS: 4x4 Matrix vs Compare Results */}
-      <div className="flex items-center justify-between mb-6 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveView('matrix')}
-            id="tab-view-matrix"
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              activeView === 'matrix'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Grid3X3 className="w-4 h-4 text-sky-600" />
-            <span>4×4 Compute Matrix</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">
-              16 Sockets
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveView('compare')}
-            id="tab-view-compare"
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              activeView === 'compare'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-indigo-600" />
-            <span>Compare Results</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-200">
-              Min-Min vs DQN
-            </span>
-          </button>
-        </div>
-
-        <div className="hidden sm:flex items-center gap-2 pr-3 text-xs font-mono text-slate-500">
-          <span>{activeView === 'matrix' ? 'Real-Time Telemetry & Server Sockets' : 'Comparative Analytics & Graphs'}</span>
-        </div>
-      </div>
-
-      {/* CONDITIONAL VIEW RENDERING: 4x4 Matrix Grid vs Compare Results */}
-      {activeView === 'compare' ? (
-        <CompareResultsSection
-          onApplySimulationResult={(simData) => {
-            if (simData.servers && simData.servers.length > 0) {
-              setServers(simData.servers);
-            }
-            setLatestSim(simData);
-          }}
-        />
-      ) : (
-        <>
           {/* 4. DASHBOARD CONTROL BAR */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
             
@@ -463,8 +403,6 @@ export default function DashboardPage() {
             </div>
 
           </div>
-        </>
-      )}
 
       {/* 6. MODAL BREAKDOWN OF ENERGY SAVINGS */}
       <EnergySavingsModal
