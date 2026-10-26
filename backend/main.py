@@ -43,8 +43,7 @@ app = FastAPI(
 # Enable CORS for Vite frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -110,9 +109,9 @@ def update_server_telemetry(server_id: str, payload: ServerUpdate):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Server with ID '{server_id}' not found"
         )
-    
+
     update_data = payload.model_dump(exclude_unset=True)
-    
+
     if update_data.get("status") == "idle":
         update_data.update(current_utilization=0.0, active_workloads=0, power_state="sleep", power_draw_w=P_SLEEP_W)
     elif update_data.get("status") == "active":
@@ -131,7 +130,7 @@ def toggle_server_status(server_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Server with ID '{server_id}' not found"
         )
-    
+
     new_status = "idle" if server["status"] == "active" else "active"
     update_payload = ServerUpdate(status=new_status)
     return update_server_telemetry(server_id, update_payload)
@@ -192,7 +191,7 @@ def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
 
 @app.get("/api/simulations/latest")
 def get_latest_sim():
-    latest = get_latest_run()
+    latest = get_latest_run(details=False)
     if not latest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No finished simulation runs yet. POST /api/simulations first.")
@@ -253,4 +252,4 @@ def reset_servers():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

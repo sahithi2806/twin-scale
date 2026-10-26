@@ -59,3 +59,22 @@ def test_training_seeds_rejected(client):
 
 def test_latest_404_before_any_comparison(client):
     assert client.get("/api/compare/latest").status_code == 404
+
+
+def test_compare_size_is_bounded(client):
+    assert client.post("/api/compare", json={"n_seeds": 21}).status_code == 422
+    assert client.post("/api/compare", json={"num_tasks": 501}).status_code == 422
+
+
+def test_latest_single_run_is_a_summary(client):
+    run_id = client.post("/api/simulations", json={"num_tasks": 20}).json()["run_id"]
+    latest = client.get("/api/simulations/latest").json()
+    assert latest["run_id"] == run_id and "step_metrics" not in latest
+    assert client.get(f"/api/simulations/{run_id}").json()["step_metrics"]
+
+
+def test_cors_only_allows_the_local_frontend(client):
+    allowed = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    other = client.get("/api/health", headers={"Origin": "https://evil.example"})
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert "access-control-allow-origin" not in other.headers

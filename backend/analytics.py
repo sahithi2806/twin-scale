@@ -58,8 +58,10 @@ def comparison_summary(comparison_id: str) -> Optional[Dict[str, Any]]:
     for run in sorted(runs, key=lambda r: r["seed"]):
         by_policy.setdefault(run["policy"], []).append(run)
     policies = [p for p in POLICY_NAMES if p in by_policy]
-    by_policy = {p: by_policy[p] for p in policies}
-    seeds = sorted({r["seed"] for r in runs})
+    # An interrupted comparison (e.g. server restart) leaves policies with different seed sets.
+    common = set.intersection(*({r["seed"] for r in by_policy[p]} for p in policies))
+    by_policy = {p: [r for r in by_policy[p] if r["seed"] in common] for p in policies}
+    seeds = sorted(common)
     first = runs[0]
 
     summary = summarize(by_policy, baseline=BASELINE)
@@ -102,8 +104,7 @@ def comparison_summary(comparison_id: str) -> Optional[Dict[str, Any]]:
         "params": {k: first["parameters"][k] for k in ("num_tasks", "sleep_enabled", "sla_slack", "arrival_rate")},
         "seeds": seeds,
         "policies": policies,
-        "skipped": {p: "not run in this comparison (DQN weights were unavailable)" for p in POLICY_NAMES
-                    if p not in by_policy},
+        "skipped": {p: "did not finish in this comparison" for p in POLICY_NAMES if p not in by_policy},
         "metrics": list(METRICS),
         "summary": summary,
         "per_server": per_server,

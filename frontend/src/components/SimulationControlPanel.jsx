@@ -43,7 +43,7 @@ export default function SimulationControlPanel({
 
   return (
     <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs relative overflow-hidden">
-      
+
       {/* Decorative subtle tech glow */}
       <div className="absolute top-0 right-0 w-36 h-36 bg-sky-100/50 rounded-full blur-2xl pointer-events-none -mr-8 -mt-8" />
 
@@ -56,9 +56,6 @@ export default function SimulationControlPanel({
           <div>
             <h3 className="font-bold text-slate-900 text-sm tracking-tight flex items-center gap-2">
               <span>Simulation Engine & Schedulers</span>
-              <span className="text-[10px] font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full font-semibold">
-                Sprint 3
-              </span>
             </h3>
             <p className="text-xs text-slate-500">Configure the synthetic workload and choose a scheduler</p>
           </div>
@@ -72,7 +69,7 @@ export default function SimulationControlPanel({
 
       {/* Configuration Form */}
       <form onSubmit={handleStart} className="mt-4 space-y-4 relative z-10">
-        
+
         {/* Scheduler Policy Selection - Segmented Selector */}
         <div>
           <label className="block text-xs font-bold text-slate-700 mb-2">

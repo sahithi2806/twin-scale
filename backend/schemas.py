@@ -43,6 +43,8 @@ class SimulationRequest(WorkloadParams):
 
 
 class CompareRequest(WorkloadParams):
-    n_seeds: int = Field(default=10, ge=2, le=50, description="Number of held-out seeds per policy")
+    # Runs synchronously inside the request: 20 seeds x 500 tasks x 3 policies stays under ~30 s.
+    num_tasks: int = Field(default=200, ge=10, le=500, description="Number of synthetic tasks per run")
+    n_seeds: int = Field(default=10, ge=2, le=20, description="Number of held-out seeds per policy")
     seed_start: int = Field(default=EVAL_SEED_START, ge=EVAL_SEED_START,
                             description="First seed; seeds below 1000 are reserved for DQN training")

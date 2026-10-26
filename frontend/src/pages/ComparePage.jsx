@@ -159,12 +159,12 @@ export default function ComparePage() {
         <form onSubmit={handleRun} className="mt-4 flex flex-wrap items-end gap-4 text-xs">
           <label className="flex flex-col gap-1 font-semibold text-slate-700">
             Seeds
-            <input type="number" min="2" max="50" value={form.n_seeds} onChange={set('n_seeds')} disabled={running}
+            <input type="number" min="2" max="20" value={form.n_seeds} onChange={set('n_seeds')} disabled={running}
               className="w-20 px-2.5 py-1.5 border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-sky-500" />
           </label>
           <label className="flex flex-col gap-1 font-semibold text-slate-700">
             Tasks per run
-            <input type="number" min="10" max="2000" step="10" value={form.num_tasks} onChange={set('num_tasks')} disabled={running}
+            <input type="number" min="10" max="500" step="10" value={form.num_tasks} onChange={set('num_tasks')} disabled={running}
               className="w-24 px-2.5 py-1.5 border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-sky-500" />
           </label>
           <label className="flex flex-col gap-1 font-semibold text-slate-700">

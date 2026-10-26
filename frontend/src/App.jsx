@@ -9,14 +9,13 @@ export default function App() {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
 
   useEffect(() => {
-    // Health probe to verify backend connectivity
-    fetch('http://localhost:8000/api/health')
-      .then((res) => {
-        if (res.ok) setIsBackendConnected(true);
-      })
-      .catch(() => {
-        setIsBackendConnected(false);
-      });
+    const check = () =>
+      fetch('http://localhost:8000/api/health')
+        .then((res) => setIsBackendConnected(res.ok))
+        .catch(() => setIsBackendConnected(false));
+    check();
+    const id = setInterval(check, 10000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -36,9 +35,6 @@ export default function App() {
         <footer className="border-t border-slate-200/80 bg-white/60 py-6 text-center text-xs text-slate-600 font-mono">
           <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>Data Center Digital Twin • Full-Stack React + Vite + FastAPI + SQLite</span>
-            <div className="flex items-center gap-4">
-              <span className="text-slate-600">16 Virtual Sockets Active</span>
-            </div>
           </div>
         </footer>
 

@@ -28,9 +28,6 @@ export default function ServerDetailPanel({
         <p className="text-xs text-slate-500 max-w-[220px] leading-relaxed">
           Click any CPU chip in the 4×4 grid to isolate its simulation telemetry and scheduler metrics.
         </p>
-        <div className="mt-4 px-3 py-1.5 bg-sky-50 border border-sky-100 rounded-lg text-[11px] font-mono text-sky-700">
-          Min-Min Telemetry Active
-        </div>
       </div>
     );
   }

@@ -53,3 +53,14 @@ def test_no_energy_saving_without_dqn():
     _store("MM-1", "min-min", 1000, [_stat("SRV-01")], comparison_id="CMP-N")
     assert analytics.comparison_summary("CMP-N")["energy_saving"] is None
     assert analytics.comparison_summary("CMP-NONE") is None
+
+
+def test_interrupted_comparison_only_uses_seeds_every_policy_finished():
+    for seed in (1000, 1001, 1002):
+        _store(f"MM-{seed}", "min-min", seed, [_stat("SRV-01", energy=2.0)], comparison_id="CMP-P")
+    _store("PA-1000", "power-aware", 1000, [_stat("SRV-01", energy=1.0)], comparison_id="CMP-P")
+    summary = analytics.comparison_summary("CMP-P")
+    assert summary["seeds"] == [1000]
+    assert summary["policies"] == ["min-min", "power-aware"]
+    assert summary["summary"]["power-aware"]["vs_baseline_pct"]["total_energy_kwh"] == pytest.approx(50.0)
+    assert summary["skipped"] == {"dqn": "did not finish in this comparison"}
