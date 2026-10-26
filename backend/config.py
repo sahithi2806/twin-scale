@@ -42,3 +42,10 @@ POWER_CLASSES = {  # cores -> (P_idle W, P_max W)
 P_SLEEP_W = 8.0
 WAKE_DELAY_S = 5.0  # time from dispatch to a sleeping server until it can start work
 IDLE_TIMEOUT_S = 10.0  # an awake server with no work goes to sleep after this long (when sleep is enabled)
+
+# --- RL reward ---
+# reward per step = -(RL_W_ENERGY * Wh used) - (RL_W_SLA * SLA violations) - (RL_W_OVERLOAD * overload excess)
+# where overload excess = sum over servers and ticks of max(0, u - OVERLOAD_THRESHOLD) * dt.
+RL_W_ENERGY = 1.0
+RL_W_SLA = 2.0
+RL_W_OVERLOAD = 1.0
