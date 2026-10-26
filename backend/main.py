@@ -18,7 +18,7 @@ from database import (
     get_run,
     get_latest_run,
 )
-from models import Server, ServerUpdate, SimulationRequest
+from schemas import Server, ServerUpdate, SimulationRequest
 from simulation import run_simulation
 from policies import get_policy, PolicyUnavailable
 

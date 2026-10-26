@@ -110,14 +110,18 @@ class Server:
     def power(self) -> float:
         return power_draw(self.state, self.utilization, self.p_idle, self.p_max)
 
-    def estimate_start(self, vcpus: int, now: float) -> float:
-        """Earliest start for a new task appended to this server's FIFO queue."""
+    def estimate_start(self, vcpus: int, now: float, dt: float = DT) -> float:
+        """Start time of a new task appended to this server's FIFO queue. Exact for the engine's tick
+        semantics: tasks start on tick boundaries and free their cores at the end of the tick they finish in."""
+        def on_grid(duration: float) -> float:
+            return math.ceil(duration / dt - 1e-9) * dt
+
         t = now
         if self.state == "sleep":
-            t += WAKE_DELAY_S
+            t += on_grid(WAKE_DELAY_S)
         elif self.state == "waking":
-            t += self.wake_left
-        releases = [(now + task.remaining, task.vcpus) for task in self.running]
+            t += on_grid(self.wake_left)
+        releases = [(now + on_grid(task.remaining), task.vcpus) for task in self.running]
         heapq.heapify(releases)
         free = self.cores - self.used
 
@@ -132,7 +136,7 @@ class Server:
         for queued in self.queue:
             t = wait_for(queued.vcpus, t)
             free -= queued.vcpus
-            heapq.heappush(releases, (t + queued.exec_time, queued.vcpus))
+            heapq.heappush(releases, (t + on_grid(queued.exec_time), queued.vcpus))
         return wait_for(vcpus, t)
 
 

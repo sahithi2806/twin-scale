@@ -1,15 +1,19 @@
 """Gym-style environment over the shared DataCenter engine. One decision = place the next arrived task."""
+import hashlib
+import json
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+import config
 from config import (
     DEFAULT_ARRIVAL_RATE,
     RL_W_ENERGY,
     RL_W_OVERLOAD,
     RL_W_SLA,
     SLA_DEADLINE_SLACK,
+    is_sla_violation,
 )
 from database import INITIAL_16_SERVERS
 from simulation import DataCenter, Task, generate_workload
@@ -74,17 +78,37 @@ class DataCenterEnv:
         if not 0 <= action < self.n_actions:
             raise ValueError(f"action {action} out of range")
         energy_before = self.dc.energy_j
-        violations_before = self.dc.violations
         overload_before = self.dc.overload_excess
 
-        self.dc.assign(self.pending.popleft(), int(action))
+        task = self.pending.popleft()
+        # FIFO start times are fully determined at dispatch, so the violation is charged to the
+        # decision that causes it rather than to whichever later step the task happens to finish in.
+        finish = self.dc.servers[action].estimate_start(task.vcpus, self.dc.t, self.dc.dt) + task.exec_time
+        violations = int(is_sla_violation(finish, task.deadline))
+        self.dc.assign(task, int(action))
         if not self.pending:
             self._advance()
 
         energy_wh = (self.dc.energy_j - energy_before) / 3600.0
-        violations = self.dc.violations - violations_before
         overload = self.dc.overload_excess - overload_before
         reward = -(RL_W_ENERGY * energy_wh) - RL_W_SLA * violations - RL_W_OVERLOAD * overload
         done = not self.pending
         info = {"energy_wh": energy_wh, "sla_violations": violations, "overload": overload, "time": self.dc.t}
         return self._obs(), float(reward), done, info
+
+
+def env_signature(raw_servers: Optional[List[Dict[str, Any]]] = None) -> str:
+    """Hash of everything a trained policy depends on; weights trained under another signature are rejected."""
+    fleet = [(s["server_id"], s["capacity"]) for s in (raw_servers or INITIAL_16_SERVERS)]
+    payload = {
+        "fleet": fleet,
+        "obs_size": observation_size(len(fleet)),
+        "power_classes": sorted(config.POWER_CLASSES.items()),
+        "p_sleep": config.P_SLEEP_W,
+        "wake_delay": config.WAKE_DELAY_S,
+        "idle_timeout": config.IDLE_TIMEOUT_S,
+        "overload": config.OVERLOAD_THRESHOLD,
+        "dt": config.DT,
+        "obs_scales": [MAX_VCPUS, DEADLINE_SCALE_S, QUEUE_SCALE],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]

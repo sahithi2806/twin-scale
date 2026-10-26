@@ -51,7 +51,7 @@ class ReplayBuffer:
 
 
 class DQNAgent:
-    def __init__(self, obs_size: int, n_actions: int, hidden: int = 128, lr: float = 1e-3, gamma: float = 0.99,
+    def __init__(self, obs_size: int, n_actions: int, hidden: int = 128, lr: float = 3e-4, gamma: float = 0.99,
                  buffer_size: int = 50_000, batch_size: int = 64, target_sync: int = 500,
                  eps_start: float = 1.0, eps_end: float = 0.05, eps_decay_steps: int = 20_000,
                  learn_start: int = 1_000, seed: int = 0):
@@ -90,7 +90,10 @@ class DQNAgent:
         obs, actions, rewards, next_obs, dones = self.buffer.sample(self.batch_size)
         q_taken = self.q(obs).gather(1, actions.unsqueeze(1)).squeeze(1)
         with torch.no_grad():
-            target = rewards + self.gamma * (1.0 - dones) * self.target(next_obs).max(dim=1).values
+            # Double DQN: online net picks the next action, target net scores it (curbs overestimation).
+            next_actions = self.q(next_obs).argmax(dim=1, keepdim=True)
+            next_q = self.target(next_obs).gather(1, next_actions).squeeze(1)
+            target = rewards + self.gamma * (1.0 - dones) * next_q
         loss = nn.functional.smooth_l1_loss(q_taken, target)
         self.optimizer.zero_grad()
         loss.backward()

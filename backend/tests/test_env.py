@@ -82,3 +82,31 @@ def test_invalid_action_rejected():
     env.reset(seed=0)
     with pytest.raises(ValueError):
         env.step(16)
+
+
+class RecordingRandom(Policy):
+    def __init__(self, seed):
+        import random
+        self.rng = random.Random(seed)
+        self.predicted = {}
+
+    def select(self, dc, task):
+        idx = self.rng.randrange(len(dc.servers))
+        self.predicted[task.task_id] = dc.servers[idx].estimate_start(task.vcpus, dc.t, dc.dt)
+        return idx
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_dispatch_time_start_estimate_is_exact(seed):
+    from simulation import DataCenter, generate_workload
+
+    policy = RecordingRandom(seed)
+    dc = DataCenter(INITIAL_16_SERVERS)
+    dc.load(generate_workload(120, seed, arrival_rate=8.0))
+    while not dc.done():
+        arrived = dc.pop_arrivals()
+        if arrived:
+            policy.dispatch(dc, arrived)
+        dc.tick()
+    for task in dc.tasks:
+        assert task.start_time == pytest.approx(policy.predicted[task.task_id])
