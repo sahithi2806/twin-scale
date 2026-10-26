@@ -5,27 +5,149 @@ A 16-server data center simulator. Synthetic, seeded workloads are scheduled by 
 time, CPU utilization and SLA violations, stores every run in SQLite, and the React dashboard
 shows the results. Every number on screen is measured by the simulator. Nothing is hardcoded.
 
-## Setup
+## Running the application
 
-Requirements: Python 3.12+ (tested on 3.14), Node 20+.
+The app has two processes: the **backend** (FastAPI on port 8000) and the **frontend** (Vite dev
+server on port 5173). The frontend calls `http://localhost:8000`, so the backend must use port 8000.
+
+### 1. Prerequisites
+
+| Tool | Version | Check |
+|---|---|---|
+| Python | 3.12 or newer (tested on 3.14) | `python --version` |
+| Node.js | 20.19+ or 22.12+ (required by Vite 8) | `node --version` |
+| npm | comes with Node | `npm --version` |
+| Git | any | `git --version` |
+
+No GPU, database server or Docker is needed. SQLite ships with Python.
+
+### 2. Get the code
 
 ```bash
-# backend
-cd backend
-python -m venv .venv
-.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU build first
-pip install -r requirements-dev.txt                                  # runtime deps + pytest/httpx
-uvicorn main:app --reload --port 8000
-
-# frontend (second terminal)
-cd frontend
-npm ci
-npm run dev                       # http://localhost:5173
+git clone <repo-url> twin-scale
+cd twin-scale
+git checkout sprint-3        # until it is merged into main
 ```
 
-`backend/servers.db` is created on first start and is not tracked in git. Delete it to start over.
-`pytest` runs the backend tests (from `backend/`).
+### 3. Backend setup (one time)
+
+Open a terminal in `twin-scale/backend`.
+
+**Windows (PowerShell or cmd):**
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-dev.txt
+```
+
+**Windows (Git Bash):** same commands, but activate with `source .venv/Scripts/activate`.
+
+**macOS / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-dev.txt
+```
+
+Install torch first, from the CPU index. Otherwise pip may download the much larger CUDA build.
+`requirements.txt` holds the runtime packages (fastapi, uvicorn, pydantic, numpy, torch), and
+`requirements-dev.txt` adds pytest and httpx for the tests.
+
+Check the install (prints the test summary, about 20 s):
+```bash
+pytest -q
+```
+
+### 4. Start the backend
+
+With the virtual environment active, in `twin-scale/backend`:
+
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+You should see `Application startup complete.` Then check:
+- http://localhost:8000/api/health: `{"status":"healthy","server_count":16,...}`
+- http://localhost:8000/docs: interactive API documentation (Swagger UI)
+
+On the first start, `backend/servers.db` is created and filled with the 16 servers. The file is
+not tracked in git.
+
+`--reload` restarts the server when a backend file changes, and any run in progress at that
+moment is marked `failed`. Leave out `--reload` if you are not editing backend code.
+
+### 5. Frontend setup and start
+
+Open a **second** terminal in `twin-scale/frontend`:
+
+```bash
+npm ci          # one time: installs exact versions from package-lock.json
+npm run dev
+```
+
+Open http://localhost:5173. The navbar should show **FastAPI: Live**. If it shows
+**Backend offline**, the backend is not running on port 8000.
+
+### 6. First walkthrough
+
+1. **CPU Dashboard**: pick a scheduler (Min-Min, Power-aware or DQN) and press **Run Simulation**.
+   A progress bar appears; when the run is done the 4×4 grid shows each server's result.
+   Servers that slept for most of the run show a dashed border and a moon icon.
+2. Click a CPU chip to inspect it (the others fade to 20%). **Toggle** in the side panel puts that
+   server to sleep or wakes it.
+3. **Compare Results**: press **Run comparison**. All three schedulers run on the same 10 held-out
+   seeds (a few seconds), and you get four bar charts with ±std error bars and a summary table.
+4. Back on the dashboard, the **Energy Saved** card now shows DQN's measured saving vs Min-Min.
+   Click it for the per-server breakdown and the SLA cost of the saving.
+
+### 7. Production build of the frontend (optional)
+
+```bash
+cd frontend
+npm run build      # output in frontend/dist
+npm run preview    # serves the build on http://localhost:4173
+```
+
+The backend still has to run on port 8000.
+
+### 8. Useful commands
+
+| Task | Command (from `backend/`, venv active) |
+|---|---|
+| Run backend tests | `pytest -q` |
+| Held-out evaluation table | `python train_dqn.py --eval` |
+| Retrain the DQN | `python train_dqn.py` (about 9 min) |
+| Reset all data | stop the backend, delete `servers.db`, start again |
+| Reset only the 16 servers | `curl -X POST localhost:8000/api/servers/reset` |
+| Lint the frontend | `npm run lint` (from `frontend/`) |
+
+### 9. Configuration (environment variables)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DCTWIN_DB_PATH` | `backend/servers.db` | SQLite file to use (the tests point this at a temporary file) |
+| `DCTWIN_DQN_WEIGHTS` | `backend/models/dqn.pt` | DQN weights the API loads |
+| `DCTWIN_SLA_SLACK` | `1.5` | Default SLA deadline slack (requests can override it) |
+
+Set them before starting the backend, e.g. PowerShell `$env:DCTWIN_SLA_SLACK = "2.0"`,
+bash `export DCTWIN_SLA_SLACK=2.0`.
+
+### 10. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Navbar says **Backend offline** / "Backend unreachable" banner | Start the backend on port 8000 and press the refresh button on the dashboard. |
+| `Address already in use` / port 8000 busy | Stop the other process on 8000. The frontend expects 8000, so don't pick another port. |
+| `ModuleNotFoundError: torch` (or fastapi) | Activate the venv (`.venv\Scripts\activate`) before `uvicorn` / `pytest`. |
+| `pip install torch` finds no version | Use Python 3.12-3.14 64-bit; check `python -c "import struct; print(struct.calcsize('P')*8)"` prints 64. |
+| DQN option is greyed out, "Train first" | `backend/models/dqn.pt` is missing or was trained for another configuration. Run `python train_dqn.py`. |
+| `npm ci` or `npm run dev` fails with an engine/version error | Upgrade Node to 20.19+ or 22.12+. |
+| A run stays at "running" | The backend restarted mid-run. Restart it once more (unfinished runs become `failed`) and run again. |
+| Old or odd data after pulling new code | Stop the backend and delete `backend/servers.db`. An older schema version is also dropped automatically on start. |
 
 ## Train the DQN
 
@@ -142,6 +264,7 @@ than 80% of the run; *overloaded* if above 85% utilization for more than 20% of 
 | GET | `/api/health` | Status and latest run |
 | GET | `/api/servers`, `/api/servers/{id}` | Server fleet (snapshot of the latest single run) |
 | POST | `/api/servers/{id}/toggle-status` | Manually put a server to sleep or wake it |
+| POST | `/api/servers/reset` | Restore the 16 servers to their initial state (runs are kept) |
 | GET | `/api/policies` | Which schedulers can run (DQN needs weights) |
 | POST | `/api/simulations` | Start a run; returns `202 {run_id, status: "queued"}` immediately |
 | GET | `/api/simulations/{id}` | Status (`queued`/`running`/`done`/`failed`), progress; results and analytics when done |
