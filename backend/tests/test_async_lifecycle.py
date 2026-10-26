@@ -47,3 +47,19 @@ def test_engine_error_marks_run_failed(monkeypatch):
 def test_unknown_run_is_404():
     with TestClient(main.app) as client:
         assert client.get("/api/simulations/RUN-DOESNOTEXIST").status_code == 404
+
+
+def test_unknown_policy_is_rejected():
+    with TestClient(main.app) as client:
+        assert client.post("/api/simulations", json={"policy": "banana"}).status_code == 422
+
+
+def test_dqn_without_weights_is_503(monkeypatch):
+    def unavailable(name):
+        raise main.PolicyUnavailable("DQN weights not found")
+
+    monkeypatch.setattr(main, "get_policy", unavailable)
+    with TestClient(main.app) as client:
+        resp = client.post("/api/simulations", json={"policy": "dqn"})
+    assert resp.status_code == 503
+    assert "weights" in resp.json()["detail"]

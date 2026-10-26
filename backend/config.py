@@ -23,3 +23,22 @@ def task_deadline(arrival_time: float, workload_mi: float, vcpus: int, slack: fl
 
 def is_sla_violation(finish_time: float, deadline: float) -> bool:
     return finish_time > deadline + 1e-9
+
+# --- Engine ---
+DT = 1.0  # simulation tick, seconds
+DEFAULT_ARRIVAL_RATE = 3.0  # Poisson task arrivals, tasks per second
+MAX_RECORDED_STEPS = 200  # step_metrics rows per server are downsampled to at most this many
+OVERLOAD_THRESHOLD = 0.85  # utilization fraction above which a server counts as overloaded
+
+# --- Power model ---
+# Awake: P = P_idle + (P_max - P_idle) * u, with u = busy cores / total cores.
+# Waking servers draw P_idle; sleeping servers draw P_SLEEP_W.
+POWER_CLASSES = {  # cores -> (P_idle W, P_max W)
+    32: (50.0, 220.0),
+    64: (72.0, 335.0),
+    96: (88.0, 410.0),
+    128: (105.0, 490.0),
+}
+P_SLEEP_W = 8.0
+WAKE_DELAY_S = 5.0  # time from dispatch to a sleeping server until it can start work
+IDLE_TIMEOUT_S = 10.0  # an awake server with no work goes to sleep after this long (when sleep is enabled)

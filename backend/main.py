@@ -19,7 +19,8 @@ from database import (
     get_latest_run,
 )
 from models import Server, ServerUpdate, SimulationRequest
-from simulation import SimulationEngine
+from simulation import run_simulation
+from policies import get_policy, PolicyUnavailable
 
 logger = logging.getLogger("dctwin")
 
@@ -140,39 +141,22 @@ def toggle_server_status(server_id: str):
 
 # --- Simulation Engine Endpoints ---
 
-def _legacy_to_result(sim: Dict[str, Any]) -> Dict[str, Any]:
-    stats = [{
-        "server_id": s["server_id"],
-        "avg_utilization": s["avg_utilization"],
-        "energy_kwh": s["energy_consumed"],
-        "tasks_assigned": s["total_tasks_assigned"],
-        "sleep_fraction": 0.0,
-        "idle_fraction": 0.0,
-        "overload_fraction": 0.0,
-        "flags": s.get("flags", ""),
-    } for s in sim["server_stats"]]
-    steps = [{**m, "energy_kwh": m["energy"], "power_state": "on", "queue_len": 0} for m in sim["step_metrics"]]
-    servers = [{**s, "power_state": "on"} for s in sim["servers"]]
-    return {
-        "makespan": sim["makespan_seconds"],
-        "total_energy_kwh": sim["total_energy_kwh"],
-        "avg_utilization": round(sum(s["avg_utilization"] for s in stats) / max(1, len(stats)), 2),
-        "sla_violations": sim["sla_violations_count"],
-        "server_stats": stats,
-        "step_metrics": steps,
-        "servers": servers,
-    }
-
-
 def new_run_id() -> str:
     return f"RUN-{uuid.uuid4().hex[:10].upper()}"
 
 
 def run_engine(policy: str, params: Dict[str, Any], progress_cb=None) -> Dict[str, Any]:
-    sim = SimulationEngine(get_all_servers()).run_simulation(
-        num_tasks=params["num_tasks"], policy=policy, seed=params["seed"], num_steps=params["num_steps"],
-        sla_slack=params["sla_slack"])
-    return _legacy_to_result(sim)
+    return run_simulation(
+        get_all_servers(), get_policy(policy),
+        num_tasks=params["num_tasks"], seed=params["seed"], sleep_enabled=params["sleep_enabled"],
+        sla_slack=params["sla_slack"], arrival_rate=params["arrival_rate"], progress_cb=progress_cb)
+
+
+def ensure_policy_available(policy: str):
+    try:
+        get_policy(policy)
+    except PolicyUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 def execute_run(run_id: str, policy: str, params: Dict[str, Any], update_servers: bool = True):
@@ -188,8 +172,8 @@ def execute_run(run_id: str, policy: str, params: Dict[str, Any], update_servers
 
 @app.post("/api/simulations", status_code=status.HTTP_202_ACCEPTED)
 def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
-    params = {"num_tasks": req.num_tasks, "seed": req.seed, "num_steps": req.num_steps,
-              "sleep_enabled": True, "sla_slack": req.sla_slack}
+    ensure_policy_available(req.policy)
+    params = req.model_dump(exclude={"policy"})
     run_id = new_run_id()
     create_run(run_id, req.policy, params)
     background_tasks.add_task(execute_run, run_id, req.policy, params)
