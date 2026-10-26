@@ -1,26 +1,21 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Cpu, 
-  ArrowRight, 
-  Zap, 
-  ShieldCheck, 
-  Activity, 
-  Layers, 
-  Thermometer, 
-  Database, 
-  CheckCircle, 
-  Sparkles,
-  Server
+import {
+  Cpu,
+  ArrowRight,
+  Zap,
+  Database,
+  CheckCircle,
+  Sparkles
 } from 'lucide-react';
 
 export default function LandingPage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] tech-grid-pattern relative pb-16">
-      
+
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 sm:pt-20 pb-16 text-center">
-        
+
         {/* Soft Badge */}
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-sky-50 border border-sky-200/80 text-sky-700 text-xs font-semibold mb-6 shadow-2xs">
           <Sparkles className="w-3.5 h-3.5 text-sky-500" />
@@ -81,7 +76,7 @@ export default function LandingPage() {
       {/* Interactive Digital Twin Preview Card */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 mb-20">
         <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-slate-200/90 shadow-xl p-6 sm:p-8 overflow-hidden relative">
-          
+
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-6 border-b border-slate-100 gap-4">
             <div>
               <span className="text-xs font-mono uppercase tracking-widest text-sky-600 font-bold">
@@ -91,7 +86,7 @@ export default function LandingPage() {
                 Rack Alpha-1 to Delta-2 Topology
               </h2>
             </div>
-            
+
             <Link
               to="/dashboard"
               className="text-xs font-semibold text-sky-600 hover:text-sky-700 flex items-center gap-1 group bg-sky-50 px-3 py-1.5 rounded-lg border border-sky-100"
@@ -161,7 +156,7 @@ export default function LandingPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
+
           {/* Card 1 */}
           <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs flex flex-col justify-between">
             <div>
@@ -190,11 +185,11 @@ export default function LandingPage() {
                 Dynamic Energy Savings
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                By grouping workloads onto optimal nodes and transitioning idle servers to low-power sleep states, the digital twin cuts facility cooling overhead and lowers PUE toward 1.15.
+                By grouping workloads onto optimal nodes and transitioning idle servers to low-power sleep states, the digital twin measures how much idle power each scheduler avoids.
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-1.5 text-xs font-mono text-emerald-700">
-              <span>+4,860 kWh / mo Conserved</span>
+              <span>Measured per run on held-out seeds</span>
             </div>
           </div>
 

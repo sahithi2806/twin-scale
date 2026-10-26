@@ -4,12 +4,8 @@ import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
 import DashboardPage from './pages/DashboardPage';
 import ComparePage from './pages/ComparePage';
-import EnergySavingsModal from './components/EnergySavingsModal';
-import { fetchEnergySavings } from './services/api';
 
 export default function App() {
-  const [isEnergyModalOpen, setIsEnergyModalOpen] = useState(false);
-  const [savingsData, setSavingsData] = useState(null);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
 
   useEffect(() => {
@@ -21,20 +17,12 @@ export default function App() {
       .catch(() => {
         setIsBackendConnected(false);
       });
-
-    fetchEnergySavings().then((res) => {
-      setSavingsData(res.data);
-      if (res.isBackendConnected) setIsBackendConnected(true);
-    });
   }, []);
 
   return (
     <Router>
       <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
-        <Navbar 
-          onOpenEnergyModal={() => setIsEnergyModalOpen(true)}
-          isBackendConnected={isBackendConnected}
-        />
+        <Navbar isBackendConnected={isBackendConnected} />
 
         <main className="flex-1">
           <Routes>
@@ -50,17 +38,10 @@ export default function App() {
             <span>Data Center Digital Twin • Full-Stack React + Vite + FastAPI + SQLite</span>
             <div className="flex items-center gap-4">
               <span className="text-slate-600">16 Virtual Sockets Active</span>
-              <span className="text-emerald-700 font-semibold">PUE 1.15 Target</span>
             </div>
           </div>
         </footer>
 
-        {/* Global Energy Modal triggerable from Navbar */}
-        <EnergySavingsModal
-          isOpen={isEnergyModalOpen}
-          onClose={() => setIsEnergyModalOpen(false)}
-          savingsData={savingsData}
-        />
       </div>
     </Router>
   );

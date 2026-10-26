@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  fetchServers, 
-  fetchEnergySavings, 
-  toggleServerStatus, 
+import {
+  fetchServers,
+  toggleServerStatus,
   runSimulation,
   fetchPolicies,
   fetchLatestSimulation,
-  FALLBACK_16_SERVERS, 
-  FALLBACK_ENERGY_SAVINGS 
+  fetchLatestComparison
 } from '../services/api';
 
 import StatsBar from '../components/StatsBar';
@@ -17,22 +15,12 @@ import ServerDetailPanel from '../components/ServerDetailPanel';
 import EnergySavingsModal from '../components/EnergySavingsModal';
 import SimulationControlPanel from '../components/SimulationControlPanel';
 
-import { 
-  RefreshCw, 
-  Grid3X3, 
-  Play, 
-  Pause, 
-  CheckCircle2, 
-  Zap, 
-  Sliders, 
-  Clock,
-  Sparkles,
-  Info
-} from 'lucide-react';
+import { RefreshCw, Grid3X3, CheckCircle2, WifiOff } from 'lucide-react';
 
 export default function DashboardPage() {
   const [servers, setServers] = useState([]);
-  const [savingsData, setSavingsData] = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [backendError, setBackendError] = useState(null);
   const [latestSim, setLatestSim] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState(null);
   const [isEnergyModalOpen, setIsEnergyModalOpen] = useState(false);
@@ -40,31 +28,27 @@ export default function DashboardPage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'idle'
-  const [isLiveFluctuation, setIsLiveFluctuation] = useState(false);
   const [simNotification, setSimNotification] = useState(null);
   const [simProgress, setSimProgress] = useState(null);
   const [simError, setSimError] = useState(null);
   const [policyStatus, setPolicyStatus] = useState(null);
 
-  // Load servers, savings, and latest simulation on initial mount
   const loadData = async () => {
     setLoading(true);
+    setBackendError(null);
     fetchPolicies().then(setPolicyStatus).catch(() => setPolicyStatus(null));
     try {
-      const [serversRes, savingsRes, latestSimRes] = await Promise.all([
+      const [serversRes, latestSimRes, latestComparison] = await Promise.all([
         fetchServers(),
-        fetchEnergySavings(),
-        fetchLatestSimulation()
+        fetchLatestSimulation(),
+        fetchLatestComparison()
       ]);
-      setServers(serversRes.data || FALLBACK_16_SERVERS);
-      setSavingsData(savingsRes.data || FALLBACK_ENERGY_SAVINGS);
-      if (latestSimRes) {
-        setLatestSim(latestSimRes);
-      }
+      setServers(serversRes.data);
+      setLatestSim(latestSimRes);
+      setComparison(latestComparison);
     } catch (err) {
-      console.error("Failed to load initial data:", err);
-      setServers(FALLBACK_16_SERVERS);
-      setSavingsData(FALLBACK_ENERGY_SAVINGS);
+      setServers([]);
+      setBackendError(err.message);
     } finally {
       setLoading(false);
     }
@@ -101,27 +85,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Live fluctuation simulation tick (toggleable)
-  useEffect(() => {
-    if (!isLiveFluctuation) return;
-
-    const interval = setInterval(() => {
-      setServers((prevServers) =>
-        prevServers.map((srv) => {
-          if (srv.status.toLowerCase() === 'idle') return srv;
-          const delta = (Math.random() - 0.48) * 2.5;
-          const nextUtil = Math.min(98.0, Math.max(15.0, srv.current_utilization + delta));
-          return {
-            ...srv,
-            current_utilization: Number(nextUtil.toFixed(1))
-          };
-        })
-      );
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [isLiveFluctuation]);
-
   // Handle CPU chip click: isolate selected CPU (100% opacity) while others dim to 20%
   const handleCpuClick = (server) => {
     if (selectedServerId === server.server_id) {
@@ -140,29 +103,9 @@ export default function DashboardPage() {
     setIsUpdating(true);
     try {
       const updated = await toggleServerStatus(serverId);
-      if (updated) {
-        setServers((prev) =>
-          prev.map((s) => (s.server_id === serverId ? updated : s))
-        );
-      } else {
-        setServers((prev) =>
-          prev.map((s) => {
-            if (s.server_id === serverId) {
-              const newStatus = s.status === 'active' ? 'idle' : 'active';
-              return {
-                ...s,
-                status: newStatus,
-                current_utilization: newStatus === 'idle' ? 0.0 : 65.0,
-                active_workloads: newStatus === 'idle' ? 0 : 12,
-                flags: newStatus === 'idle' ? 'IDLE_CONSOLIDATED' : 'OPTIMAL_LOAD'
-              };
-            }
-            return s;
-          })
-        );
-      }
+      setServers((prev) => prev.map((s) => (s.server_id === serverId ? updated : s)));
     } catch (err) {
-      console.error("Error toggling server status:", err);
+      setSimError(`Could not toggle ${serverId}: ${err.message}`);
     } finally {
       setIsUpdating(false);
     }
@@ -178,11 +121,11 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      
+
       {/* 1. TOP STATS BAR WITH PROMINENT CLICKABLE 'ENERGY SAVED' CARD */}
       <StatsBar
         servers={servers}
-        savingsData={savingsData}
+        comparison={comparison}
         latestSim={latestSim}
         onOpenEnergyModal={() => setIsEnergyModalOpen(true)}
       />
@@ -226,6 +169,13 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {backendError && (
+        <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 font-mono flex items-center gap-2">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          <span>Backend unreachable ({backendError}). Start it with `uvicorn main:app` in backend/ and press refresh.</span>
+        </div>
+      )}
+
       {simError && (
         <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-mono flex items-center justify-between gap-3">
           <span>Simulation failed: {simError}</span>
@@ -246,7 +196,7 @@ export default function DashboardPage() {
 
           {/* 4. DASHBOARD CONTROL BAR */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
-            
+
             {/* Left: Focus / Selection status */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -276,7 +226,7 @@ export default function DashboardPage() {
 
             {/* Right: Filters & Controls */}
             <div className="flex items-center gap-2.5">
-              
+
               {/* Status Filter Tabs */}
               <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs font-medium">
                 <button
@@ -311,29 +261,6 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              {/* Live Fluctuation Toggle */}
-              <button
-                onClick={() => setIsLiveFluctuation(!isLiveFluctuation)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
-                  isLiveFluctuation
-                    ? 'bg-sky-50 border-sky-300 text-sky-700'
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-                title="Toggle micro-fluctuation simulation"
-              >
-                {isLiveFluctuation ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Pause Pulse</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Micro Pulse</span>
-                  </>
-                )}
-              </button>
-
               {/* Refresh Data */}
               <button
                 onClick={loadData}
@@ -348,17 +275,17 @@ export default function DashboardPage() {
 
           {/* 5. MAIN INTERACTIVE SECTION: 4x4 GRID + DETAIL PANEL */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            
+
             {/* LEFT / MAIN AREA: 4x4 CPU GRID (8 cols out of 12) */}
             <div className="lg:col-span-8 bg-white/70 backdrop-blur-sm rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
-              
+
               <div className="flex items-center justify-between text-xs text-slate-500 mb-4 pb-2 border-b border-slate-100 font-mono">
                 <span>RACK-A (SRV 01-04) • RACK-B (05-08) • RACK-C (09-12) • RACK-D (13-16)</span>
                 <span className="hidden sm:inline">2D High-Density Socket Layout</span>
               </div>
 
               {/* The 4x4 Neat Grid Layout with Dynamic Data Binding */}
-              <div 
+              <div
                 id="cpu-matrix-grid"
                 className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4"
               >
@@ -408,8 +335,7 @@ export default function DashboardPage() {
       <EnergySavingsModal
         isOpen={isEnergyModalOpen}
         onClose={() => setIsEnergyModalOpen(false)}
-        savingsData={savingsData}
-        latestSim={latestSim}
+        comparison={comparison}
       />
 
     </div>

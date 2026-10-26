@@ -1,16 +1,16 @@
 import React from 'react';
-import { Zap, Server, Activity, ArrowUpRight, ShieldCheck, Thermometer, Clock } from 'lucide-react';
+import { Zap, Server, Activity, ArrowUpRight, Thermometer, Clock } from 'lucide-react';
 
 export default function StatsBar({
   servers = [],
-  savingsData,
+  comparison,
   latestSim,
   onOpenEnergyModal
 }) {
   const totalServers = servers.length;
   const activeServers = servers.filter(s => s.status.toLowerCase() === 'active').length;
   const idleServers = totalServers - activeServers;
-  
+
   const avgUtilization = totalServers > 0
     ? (servers.reduce((acc, s) => acc + (s.current_utilization || 0), 0) / totalServers).toFixed(1)
     : '0.0';
@@ -19,29 +19,12 @@ export default function StatsBar({
     ? (servers.reduce((acc, s) => acc + (s.temperature_c || 45), 0) / totalServers).toFixed(1)
     : '45.0';
 
-  // Dynamic calculation based on simulation run's total energy consumption & savings
-  const hasSim = latestSim?.energy_saved_kwh != null;
-  const isDqn = latestSim?.policy === 'dqn';
-  
-  const displaySavedKwh = hasSim
-    ? `${latestSim.energy_saved_kwh.toLocaleString()}`
-    : savingsData?.total_energy_saved_kwh 
-      ? savingsData.total_energy_saved_kwh.toLocaleString() 
-      : '4,860';
-
-  const displaySavedUnit = hasSim ? 'kWh / run' : 'kWh / mo';
-
-  const displaySavedUsd = hasSim
-    ? (latestSim.cost_saved_usd || (latestSim.energy_saved_kwh * 0.14) || 0.32).toFixed(2)
-    : (savingsData?.total_cost_saved_usd || 680).toFixed(0);
-
-  const displaySavingsPct = hasSim
-    ? `${latestSim.energy_saved_pct || 67.4}% conserved`
-    : 'PUE 1.15 ★';
+  const hasSim = !!latestSim;
+  const saving = comparison?.energy_saving;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      
+
       {/* 1. PROMINENT CLICKABLE ENERGY SAVED STATS CARD */}
       <div
         onClick={onOpenEnergyModal}
@@ -70,7 +53,7 @@ export default function StatsBar({
                 Energy Saved
               </span>
               <span className="block text-[10px] text-emerald-700 font-medium">
-                {hasSim ? `${isDqn ? 'DQN RL' : 'Min-Min'} Simulation Run` : 'Digital Twin Net'}
+                DQN vs Min-Min · latest comparison
               </span>
             </div>
           </div>
@@ -81,17 +64,31 @@ export default function StatsBar({
           </div>
         </div>
 
-        <div className="flex items-baseline gap-2 mt-1">
-          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-950 tracking-tight">
-            +{displaySavedKwh}
-          </span>
-          <span className="text-xs font-semibold text-emerald-700 font-mono">{displaySavedUnit}</span>
-        </div>
-
-        <div className="mt-2 pt-2 border-t border-emerald-100 flex items-center justify-between text-[11px] text-emerald-800">
-          <span>Est. <strong>${displaySavedUsd}</strong> Saved</span>
-          <span className="font-semibold text-emerald-700">{displaySavingsPct}</span>
-        </div>
+        {saving ? (
+          <>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-950 tracking-tight">
+                {saving.saved_pct >= 0 ? '' : '−'}{Math.abs(saving.saved_pct).toFixed(1)}%
+              </span>
+              <span className="text-xs font-semibold text-emerald-700 font-mono">
+                {saving.saved_kwh.toFixed(4)} kWh / run
+              </span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-emerald-100 flex items-center justify-between text-[11px] text-emerald-800">
+              <span>{comparison.seeds.length} held-out seeds</span>
+              <span className="font-semibold">
+                SLA cost {saving.sla_cost >= 0 ? '+' : '−'}{Math.abs(saving.sla_cost).toFixed(1)} / run
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-1 text-lg font-bold text-emerald-950">Run a comparison</div>
+            <div className="mt-2 pt-2 border-t border-emerald-100 text-[11px] text-emerald-800">
+              {comparison ? 'Latest comparison has no DQN result' : 'No measured saving yet'}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 2. Cluster Workload & Avg Utilization */}
@@ -110,7 +107,7 @@ export default function StatsBar({
             {avgUtilization}%
           </span>
           <span className="text-xs text-sky-600 font-medium font-mono">
-            {hasSim ? `${latestSim.total_tasks} Tasks Scheduled` : 'Target: <80%'}
+            {hasSim ? `${latestSim.num_tasks} tasks, last run` : 'Target: <80%'}
           </span>
         </div>
 
@@ -159,16 +156,16 @@ export default function StatsBar({
 
         <div className="flex items-baseline gap-2 mt-1">
           <span className="text-2xl sm:text-3xl font-bold font-mono text-slate-900 tracking-tight">
-            {hasSim ? `${latestSim.makespan_seconds}s` : `${avgTemp}°C`}
+            {hasSim ? `${latestSim.makespan.toFixed(1)}s` : `${avgTemp}°C`}
           </span>
           <span className="text-xs text-emerald-700 font-medium">
-            {hasSim ? `${isDqn ? 'DQN Agent' : 'Min-Min'} Done` : 'Safe Margin'}
+            {hasSim ? `${latestSim.policy} done` : 'Safe Margin'}
           </span>
         </div>
 
         <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
-          <span>{hasSim ? `Total IT Energy: ${latestSim.total_energy_kwh} kWh` : 'AI Chilled Airflow'}</span>
-          <span className="font-mono text-emerald-700 font-semibold">{hasSim ? (isDqn ? 'PUE 1.13' : 'PUE 1.15') : 'Active'}</span>
+          <span>{hasSim ? `IT energy: ${latestSim.total_energy_kwh.toFixed(4)} kWh` : 'Last run'}</span>
+          <span className="font-mono text-emerald-700 font-semibold">{hasSim ? `${latestSim.sla_violations} SLA viol.` : 'No run yet'}</span>
         </div>
       </div>
 
