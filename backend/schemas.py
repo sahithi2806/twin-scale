@@ -13,9 +13,7 @@ class ServerBase(BaseModel):
     temperature_c: Optional[float] = 42.5
     power_draw_w: Optional[float] = 320.0
     active_workloads: Optional[int] = 12
-    avg_utilization: Optional[float] = None
-    energy_consumed_kwh: Optional[float] = None
-    flags: Optional[str] = None
+    power_state: str = Field("on", description="'on' or 'sleep' (from the latest single run, or a manual toggle)")
 
 class Server(ServerBase):
     id: Optional[int] = None

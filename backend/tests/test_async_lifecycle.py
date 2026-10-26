@@ -73,3 +73,15 @@ def test_restart_fails_unfinished_runs():
     run = database.get_run("RUN-STUCK", details=False)
     assert run["status"] == "failed"
     assert "restarted" in run["error"]
+
+
+def test_toggle_sets_sleep_state_without_invented_numbers():
+    with TestClient(main.app) as client:
+        before = client.get("/api/servers/SRV-01").json()
+        asleep = client.post("/api/servers/SRV-01/toggle-status").json()
+        assert asleep["status"] == "idle" and asleep["power_state"] == "sleep"
+        assert asleep["current_utilization"] == 0.0 and asleep["power_draw_w"] == main.P_SLEEP_W
+        awake = client.post("/api/servers/SRV-01/toggle-status").json()
+        assert awake["status"] == "active" and awake["power_state"] == "on"
+        assert awake["temperature_c"] == before["temperature_c"]
+        assert all("power_state" in s for s in client.get("/api/servers").json())

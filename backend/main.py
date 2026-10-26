@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 import logging
-import random
 
 import uuid
 
@@ -22,6 +21,7 @@ from database import (
 from schemas import Server, ServerUpdate, SimulationRequest, CompareRequest
 from evaluation import eval_seeds
 from analytics import comparison_summary, run_analytics
+from config import P_SLEEP_W
 from simulation import run_simulation
 from policies import POLICY_NAMES, get_policy, PolicyUnavailable
 
@@ -114,18 +114,11 @@ def update_server_telemetry(server_id: str, payload: ServerUpdate):
     update_data = payload.model_dump(exclude_unset=True)
     
     if update_data.get("status") == "idle":
-        update_data["current_utilization"] = 0.0
-        update_data["active_workloads"] = 0
-        update_data["temperature_c"] = round(random.uniform(31.0, 34.0), 1)
-        update_data["power_draw_w"] = round(random.uniform(65.0, 80.0), 1)
-    elif update_data.get("status") == "active" and server["status"] == "idle":
-        update_data["current_utilization"] = round(random.uniform(45.0, 75.0), 1)
-        update_data["active_workloads"] = random.randint(8, 20)
-        update_data["temperature_c"] = round(random.uniform(48.0, 58.0), 1)
-        update_data["power_draw_w"] = round(random.uniform(310.0, 390.0), 1)
+        update_data.update(current_utilization=0.0, active_workloads=0, power_state="sleep", power_draw_w=P_SLEEP_W)
+    elif update_data.get("status") == "active":
+        update_data["power_state"] = "on"
 
-    updated = update_server(server_id, update_data)
-    return updated
+    return update_server(server_id, update_data)
 
 @app.post("/api/servers/{server_id}/toggle-status", response_model=Server)
 def toggle_server_status(server_id: str):
