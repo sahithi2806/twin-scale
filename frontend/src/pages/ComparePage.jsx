@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ErrorBar, Cell, Re
 import { BarChart3, Play, RefreshCw, Info, Moon } from 'lucide-react';
 import { fetchLatestComparison, runComparison } from '../services/api';
 
-export const POLICY_META = {
+const POLICY_META = {
   'min-min': { label: 'Min-Min', color: '#2a78d6' },
   'power-aware': { label: 'Power-aware', color: '#eb6834' },
   dqn: { label: 'DQN', color: '#1baf7a' }
