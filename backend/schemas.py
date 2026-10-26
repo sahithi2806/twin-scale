@@ -26,7 +26,7 @@ class ServerUpdate(BaseModel):
 
 # --- Simulation Engine Models ---
 
-PolicyName = Literal["min-min", "dqn"]
+PolicyName = Literal["min-min", "power-aware", "dqn"]
 
 
 class SimulationRequest(BaseModel):
