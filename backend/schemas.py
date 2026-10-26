@@ -35,7 +35,7 @@ class WorkloadParams(BaseModel):
     sleep_enabled: bool = Field(default=True, description="Allow idle servers to enter the sleep state")
     sla_slack: float = Field(default=SLA_DEADLINE_SLACK, ge=1.0, le=10.0,
                              description="Deadline = arrival + sla_slack * ideal execution time")
-    arrival_rate: float = Field(default=DEFAULT_ARRIVAL_RATE, gt=0.0, le=50.0,
+    arrival_rate: float = Field(default=DEFAULT_ARRIVAL_RATE, gt=0.0, le=10.0,
                                 description="Poisson arrival rate, tasks per second")
 
 

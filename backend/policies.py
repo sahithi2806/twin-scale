@@ -30,28 +30,33 @@ class MinMinPolicy(Policy):
 
     name = "min-min"
 
-    def _best_server(self, dc: DataCenter, task: Task):
+    def _best_server(self, dc: DataCenter, task: Task, starts: dict):
         best = None
         for s in dc.servers:
-            ect = s.estimate_start(task.vcpus, dc.t) + task.exec_time
-            key = (round(ect, 9), s.utilization + s.queued_cores / s.cores, s.idx)
+            k = (s.idx, task.vcpus)
+            if k not in starts:
+                starts[k] = s.estimate_start(task.vcpus, dc.t, dc.dt)
+            key = (round(starts[k] + task.exec_time, 9), s.utilization + s.queued_cores / s.cores, s.idx)
             if best is None or key < best:
                 best = key
         return best
 
     def dispatch(self, dc: DataCenter, tasks: List[Task]):
         remaining = list(tasks)
+        starts: dict = {}  # (server, vCPUs) -> start estimate; only the server that just got a task changes
         while remaining:
             choice = None
             for ti, task in enumerate(remaining):
-                key = self._best_server(dc, task)
+                key = self._best_server(dc, task, starts)
                 if choice is None or key[0] < choice[0][0]:
                     choice = (key, ti)
             (_, _, server_idx), ti = choice
             dc.assign(remaining.pop(ti), server_idx)
+            for k in [k for k in starts if k[0] == server_idx]:
+                del starts[k]
 
     def select(self, dc: DataCenter, task: Task) -> int:
-        return self._best_server(dc, task)[2]
+        return self._best_server(dc, task, {})[2]
 
 
 class PowerAwarePolicy(Policy):
