@@ -63,3 +63,13 @@ def test_dqn_without_weights_is_503(monkeypatch):
         resp = client.post("/api/simulations", json={"policy": "dqn"})
     assert resp.status_code == 503
     assert "weights" in resp.json()["detail"]
+
+
+def test_restart_fails_unfinished_runs():
+    import database
+    database.create_run("RUN-STUCK", "min-min", {"seed": 1, "num_tasks": 10, "sleep_enabled": True, "sla_slack": 1.5})
+    database.set_run_status("RUN-STUCK", "running", progress=0.4)
+    database.init_db()
+    run = database.get_run("RUN-STUCK", details=False)
+    assert run["status"] == "failed"
+    assert "restarted" in run["error"]

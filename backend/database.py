@@ -261,6 +261,9 @@ def init_db(force_reseed: bool = False):
         conn.executescript(SCHEMA)
         with conn:
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            # shortcut: assumes one API process; with several workers, move runs to a shared job queue.
+            conn.execute("""UPDATE simulations SET status = 'failed', error = 'Server restarted before the run finished',
+                            finished_at = CURRENT_TIMESTAMP WHERE status IN ('queued', 'running')""")
             count = conn.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
             if count == 0 or force_reseed:
                 conn.execute("DELETE FROM servers")
