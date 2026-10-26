@@ -3,7 +3,7 @@ import os
 import json
 from typing import List, Dict, Any, Optional
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "servers.db")
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "servers.db")
 
 INITIAL_16_SERVERS = [
     {
@@ -168,270 +168,261 @@ INITIAL_16_SERVERS = [
     }
 ]
 
+SCHEMA_VERSION = 2
+RUN_STATUSES = ("queued", "running", "done", "failed")
+
+
+def db_path() -> str:
+    return os.environ.get("DCTWIN_DB_PATH", DEFAULT_DB_PATH)
+
+
 def get_db_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id TEXT UNIQUE NOT NULL,
+    capacity TEXT NOT NULL,
+    rack_id TEXT NOT NULL,
+    current_utilization REAL NOT NULL,
+    status TEXT NOT NULL,
+    power_state TEXT NOT NULL DEFAULT 'on',
+    temperature_c REAL NOT NULL,
+    power_draw_w REAL NOT NULL,
+    active_workloads INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS simulations (
+    run_id TEXT PRIMARY KEY,
+    policy TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'running', 'done', 'failed')),
+    progress REAL NOT NULL DEFAULT 0,
+    error TEXT,
+    seed INTEGER NOT NULL,
+    num_tasks INTEGER NOT NULL,
+    sleep_enabled INTEGER NOT NULL DEFAULT 1,
+    sla_slack REAL NOT NULL,
+    parameters TEXT NOT NULL,
+    comparison_id TEXT,
+    makespan REAL,
+    total_energy_kwh REAL,
+    avg_utilization REAL,
+    sla_violations INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_simulations_comparison ON simulations (comparison_id);
+
+CREATE TABLE IF NOT EXISTS step_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES simulations (run_id) ON DELETE CASCADE,
+    step INTEGER NOT NULL,
+    timestamp REAL NOT NULL,
+    server_id TEXT NOT NULL,
+    utilization REAL NOT NULL,
+    energy_kwh REAL NOT NULL,
+    power_state TEXT NOT NULL,
+    queue_len INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_step_metrics_run ON step_metrics (run_id);
+
+CREATE TABLE IF NOT EXISTS server_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES simulations (run_id) ON DELETE CASCADE,
+    server_id TEXT NOT NULL,
+    avg_utilization REAL NOT NULL,
+    energy_kwh REAL NOT NULL,
+    tasks_assigned INTEGER NOT NULL,
+    sleep_fraction REAL NOT NULL,
+    idle_fraction REAL NOT NULL,
+    overload_fraction REAL NOT NULL,
+    flags TEXT,
+    UNIQUE (run_id, server_id)
+);
+CREATE INDEX IF NOT EXISTS idx_server_stats_run ON server_stats (run_id);
+"""
+
 
 def init_db(force_reseed: bool = False):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # 1. Servers table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS servers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server_id TEXT UNIQUE NOT NULL,
-            capacity TEXT NOT NULL,
-            current_utilization REAL NOT NULL,
-            status TEXT NOT NULL,
-            rack_id TEXT NOT NULL,
-            temperature_c REAL NOT NULL,
-            power_draw_w REAL NOT NULL,
-            active_workloads INTEGER NOT NULL
-        )
-    """)
-
-    # 2. Simulations table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS simulations (
-            run_id TEXT PRIMARY KEY,
-            policy TEXT NOT NULL,
-            parameters TEXT NOT NULL,
-            total_tasks INTEGER NOT NULL,
-            makespan REAL NOT NULL,
-            total_energy_kwh REAL NOT NULL,
-            baseline_energy_kwh REAL NOT NULL,
-            energy_saved_kwh REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 3. Step metrics table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS step_metrics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT NOT NULL,
-            step INTEGER NOT NULL,
-            timestamp REAL NOT NULL,
-            server_id TEXT NOT NULL,
-            utilization REAL NOT NULL,
-            energy REAL NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES simulations (run_id) ON DELETE CASCADE
-        )
-    """)
-
-    # 4. Server stats table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS server_stats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT NOT NULL,
-            server_id TEXT NOT NULL,
-            avg_utilization REAL NOT NULL,
-            energy_consumed REAL NOT NULL,
-            total_tasks_assigned INTEGER NOT NULL,
-            flags TEXT,
-            FOREIGN KEY (run_id) REFERENCES simulations (run_id) ON DELETE CASCADE
-        )
-    """)
-
-    conn.commit()
-
-    # Check row count for servers
-    cursor.execute("SELECT COUNT(*) FROM servers")
-    count = cursor.fetchone()[0]
-
-    if count == 0 or force_reseed:
-        if force_reseed:
-            cursor.execute("DELETE FROM servers")
-            conn.commit()
-            
-        for srv in INITIAL_16_SERVERS:
-            cursor.execute("""
-                INSERT OR REPLACE INTO servers 
-                (server_id, capacity, current_utilization, status, rack_id, temperature_c, power_draw_w, active_workloads)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                srv["server_id"],
-                srv["capacity"],
-                srv["current_utilization"],
-                srv["status"],
-                srv["rack_id"],
-                srv["temperature_c"],
-                srv["power_draw_w"],
-                srv["active_workloads"]
-            ))
-        conn.commit()
-    conn.close()
-
-def save_simulation_results(sim: Dict[str, Any]):
-    """
-    Stores all simulation results (simulations, server_stats, step_metrics)
-    and updates server states inside a single atomic SQLite transaction.
-    """
-    conn = get_db_connection()
     try:
-        with conn:  # Enforces a single atomic transaction
-            cursor = conn.cursor()
-
-            # 1. Store run record in simulations table
-            cursor.execute("""
-                INSERT INTO simulations 
-                (run_id, policy, parameters, total_tasks, makespan, total_energy_kwh, baseline_energy_kwh, energy_saved_kwh)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                sim["run_id"],
-                sim["policy"],
-                json.dumps(sim["parameters"]),
-                sim["total_tasks"],
-                sim["makespan_seconds"],
-                sim["total_energy_kwh"],
-                sim["baseline_energy_kwh"],
-                sim["energy_saved_kwh"]
-            ))
-
-            # 2. Store aggregated server statistics
-            for ss in sim["server_stats"]:
-                cursor.execute("""
-                    INSERT INTO server_stats 
-                    (run_id, server_id, avg_utilization, energy_consumed, total_tasks_assigned, flags)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    sim["run_id"],
-                    ss["server_id"],
-                    ss["avg_utilization"],
-                    ss["energy_consumed"],
-                    ss["total_tasks_assigned"],
-                    ss.get("flags", "")
-                ))
-
-            # 3. Store step metrics time-series
-            for sm in sim["step_metrics"]:
-                cursor.execute("""
-                    INSERT INTO step_metrics 
-                    (run_id, step, timestamp, server_id, utilization, energy)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    sim["run_id"],
-                    sm["step"],
-                    sm["timestamp"],
-                    sm["server_id"],
-                    sm["utilization"],
-                    sm["energy"]
-                ))
-
-            # 4. Synchronize virtual servers table with the latest simulation state
-            for srv in sim["servers"]:
-                cursor.execute("""
-                    UPDATE servers
-                    SET current_utilization = ?, status = ?, temperature_c = ?, power_draw_w = ?, active_workloads = ?
-                    WHERE server_id = ?
-                """, (
-                    srv["current_utilization"],
-                    srv["status"],
-                    srv["temperature_c"],
-                    srv["power_draw_w"],
-                    srv["active_workloads"],
-                    srv["server_id"]
-                ))
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < SCHEMA_VERSION:
+            # Pre-Sprint-3 runs were scored against a fabricated baseline; drop rather than migrate.
+            with conn:
+                for table in ("step_metrics", "server_stats", "simulations", "servers"):
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.executescript(SCHEMA)
+        with conn:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            count = conn.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
+            if count == 0 or force_reseed:
+                conn.execute("DELETE FROM servers")
+                conn.executemany(
+                    """INSERT INTO servers
+                       (server_id, capacity, rack_id, current_utilization, status, power_state,
+                        temperature_c, power_draw_w, active_workloads)
+                       VALUES (?, ?, ?, ?, ?, 'on', ?, ?, ?)""",
+                    [(s["server_id"], s["capacity"], s["rack_id"], s["current_utilization"], s["status"],
+                      s["temperature_c"], s["power_draw_w"], s["active_workloads"])
+                     for s in INITIAL_16_SERVERS],
+                )
     finally:
         conn.close()
 
-def get_latest_simulation() -> Optional[Dict[str, Any]]:
+
+def create_run(run_id: str, policy: str, params: Dict[str, Any], comparison_id: Optional[str] = None):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM simulations ORDER BY created_at DESC LIMIT 1")
-    row = cursor.fetchone()
-    if not row:
+    try:
+        with conn:
+            conn.execute(
+                """INSERT INTO simulations
+                   (run_id, policy, status, seed, num_tasks, sleep_enabled, sla_slack, parameters, comparison_id)
+                   VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)""",
+                (run_id, policy, params["seed"], params["num_tasks"], int(params["sleep_enabled"]),
+                 params["sla_slack"], json.dumps(params), comparison_id),
+            )
+    finally:
         conn.close()
-        return None
 
-    sim = dict(row)
-    sim["parameters"] = json.loads(sim["parameters"])
-    
-    # Fetch server_stats
-    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (sim["run_id"],))
-    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
 
-    conn.close()
-    return sim
-
-def get_latest_simulation_by_policy(policy: str) -> Optional[Dict[str, Any]]:
+def set_run_status(run_id: str, status: str, progress: Optional[float] = None, error: Optional[str] = None):
+    if status not in RUN_STATUSES:
+        raise ValueError(f"invalid status {status!r}")
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM simulations WHERE LOWER(policy) = LOWER(?) ORDER BY created_at DESC LIMIT 1", (policy,))
-    row = cursor.fetchone()
-    if not row:
+    try:
+        with conn:
+            conn.execute(
+                """UPDATE simulations
+                   SET status = ?, progress = COALESCE(?, progress), error = COALESCE(?, error),
+                       finished_at = CASE WHEN ? IN ('done', 'failed') THEN CURRENT_TIMESTAMP ELSE finished_at END
+                   WHERE run_id = ?""",
+                (status, progress, error, status, run_id),
+            )
+    finally:
         conn.close()
-        return None
 
-    sim = dict(row)
-    sim["parameters"] = json.loads(sim["parameters"])
-    
-    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (sim["run_id"],))
-    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
 
-    cursor.execute("SELECT * FROM step_metrics WHERE run_id = ? ORDER BY step ASC", (sim["run_id"],))
-    sim["step_metrics"] = [dict(r) for r in cursor.fetchall()]
-
-    conn.close()
-    return sim
-
-def get_simulation_by_id(run_id: str) -> Optional[Dict[str, Any]]:
+def save_run_results(run_id: str, result: Dict[str, Any], update_servers: bool = True):
+    """Writes the run summary, server_stats, step_metrics and (optionally) the servers snapshot in one transaction."""
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM simulations WHERE run_id = ?", (run_id,))
-    row = cursor.fetchone()
-    if not row:
+    try:
+        with conn:
+            conn.execute(
+                """UPDATE simulations
+                   SET status = 'done', progress = 1.0, makespan = ?, total_energy_kwh = ?,
+                       avg_utilization = ?, sla_violations = ?, finished_at = CURRENT_TIMESTAMP
+                   WHERE run_id = ?""",
+                (result["makespan"], result["total_energy_kwh"], result["avg_utilization"],
+                 result["sla_violations"], run_id),
+            )
+            conn.executemany(
+                """INSERT INTO server_stats
+                   (run_id, server_id, avg_utilization, energy_kwh, tasks_assigned,
+                    sleep_fraction, idle_fraction, overload_fraction, flags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(run_id, s["server_id"], s["avg_utilization"], s["energy_kwh"], s["tasks_assigned"],
+                  s["sleep_fraction"], s["idle_fraction"], s["overload_fraction"], s.get("flags", ""))
+                 for s in result["server_stats"]],
+            )
+            conn.executemany(
+                """INSERT INTO step_metrics
+                   (run_id, step, timestamp, server_id, utilization, energy_kwh, power_state, queue_len)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(run_id, m["step"], m["timestamp"], m["server_id"], m["utilization"], m["energy_kwh"],
+                  m["power_state"], m["queue_len"])
+                 for m in result["step_metrics"]],
+            )
+            if update_servers:
+                conn.executemany(
+                    """UPDATE servers
+                       SET current_utilization = ?, status = ?, power_state = ?, temperature_c = ?,
+                           power_draw_w = ?, active_workloads = ?
+                       WHERE server_id = ?""",
+                    [(s["current_utilization"], s["status"], s["power_state"], s["temperature_c"],
+                      s["power_draw_w"], s["active_workloads"], s["server_id"])
+                     for s in result["servers"]],
+                )
+    finally:
         conn.close()
-        return None
 
-    sim = dict(row)
-    sim["parameters"] = json.loads(sim["parameters"])
-    
-    cursor.execute("SELECT * FROM server_stats WHERE run_id = ?", (run_id,))
-    sim["server_stats"] = [dict(r) for r in cursor.fetchall()]
 
-    cursor.execute("SELECT * FROM step_metrics WHERE run_id = ? ORDER BY step ASC", (run_id,))
-    sim["step_metrics"] = [dict(r) for r in cursor.fetchall()]
+def _row_to_run(conn: sqlite3.Connection, row: sqlite3.Row, details: bool) -> Dict[str, Any]:
+    run = dict(row)
+    run["parameters"] = json.loads(run["parameters"])
+    run["sleep_enabled"] = bool(run["sleep_enabled"])
+    if details:
+        run["server_stats"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM server_stats WHERE run_id = ? ORDER BY server_id", (run["run_id"],))]
+        run["step_metrics"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM step_metrics WHERE run_id = ? ORDER BY step, server_id", (run["run_id"],))]
+    return run
 
-    conn.close()
-    return sim
+
+def get_run(run_id: str, details: bool = True) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM simulations WHERE run_id = ?", (run_id,)).fetchone()
+        return _row_to_run(conn, row, details) if row else None
+    finally:
+        conn.close()
+
+
+def get_latest_run(details: bool = True) -> Optional[Dict[str, Any]]:
+    """Latest finished single run; runs that belong to a comparison are excluded."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT * FROM simulations WHERE status = 'done' AND comparison_id IS NULL
+               ORDER BY finished_at DESC, rowid DESC LIMIT 1""").fetchone()
+        return _row_to_run(conn, row, details) if row else None
+    finally:
+        conn.close()
+
+
+def delete_run(run_id: str):
+    conn = get_db_connection()
+    try:
+        with conn:
+            conn.execute("DELETE FROM simulations WHERE run_id = ?", (run_id,))
+    finally:
+        conn.close()
+
 
 def get_all_servers() -> List[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM servers ORDER BY id ASC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    try:
+        return [dict(r) for r in conn.execute("SELECT * FROM servers ORDER BY id ASC")]
+    finally:
+        conn.close()
+
 
 def get_server_by_id(server_id: str) -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM servers WHERE server_id = ? OR id = ?", (server_id, server_id))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute("SELECT * FROM servers WHERE server_id = ?", (server_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
 
 def update_server(server_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    fields = []
-    values = []
-    for k, v in updates.items():
-        if v is not None and k in ["status", "current_utilization", "active_workloads", "temperature_c", "power_draw_w"]:
-            fields.append(f"{k} = ?")
-            values.append(v)
-            
-    if not fields:
-        conn.close()
-        return get_server_by_id(server_id)
-
-    values.append(server_id)
-    query = f"UPDATE servers SET {', '.join(fields)} WHERE server_id = ?"
-    cursor.execute(query, tuple(values))
-    conn.commit()
-    conn.close()
+    allowed = ["status", "power_state", "current_utilization", "active_workloads", "temperature_c", "power_draw_w"]
+    fields = [(k, v) for k, v in updates.items() if v is not None and k in allowed]
+    if fields:
+        conn = get_db_connection()
+        try:
+            with conn:
+                conn.execute(
+                    f"UPDATE servers SET {', '.join(f'{k} = ?' for k, _ in fields)} WHERE server_id = ?",
+                    (*[v for _, v in fields], server_id),
+                )
+        finally:
+            conn.close()
     return get_server_by_id(server_id)
