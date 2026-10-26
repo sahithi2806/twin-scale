@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  fetchServers, 
-  fetchEnergySavings, 
-  toggleServerStatus, 
+import { Link } from 'react-router-dom';
+import {
+  fetchServers,
+  toggleServerStatus,
   runSimulation,
+  fetchPolicies,
   fetchLatestSimulation,
-  FALLBACK_16_SERVERS, 
-  FALLBACK_ENERGY_SAVINGS 
+  fetchLatestComparison
 } from '../services/api';
 
 import StatsBar from '../components/StatsBar';
@@ -14,26 +14,13 @@ import CpuChip from '../components/CpuChip';
 import ServerDetailPanel from '../components/ServerDetailPanel';
 import EnergySavingsModal from '../components/EnergySavingsModal';
 import SimulationControlPanel from '../components/SimulationControlPanel';
-import CompareResultsSection from '../components/CompareResultsSection';
 
-import { 
-  RefreshCw, 
-  Grid3X3, 
-  Play, 
-  Pause, 
-  CheckCircle2, 
-  Zap, 
-  Sliders, 
-  Clock,
-  Sparkles,
-  Info,
-  BarChart3
-} from 'lucide-react';
+import { RefreshCw, Grid3X3, CheckCircle2, WifiOff } from 'lucide-react';
 
 export default function DashboardPage() {
-  const [activeView, setActiveView] = useState('matrix'); // 'matrix' | 'compare'
   const [servers, setServers] = useState([]);
-  const [savingsData, setSavingsData] = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [backendError, setBackendError] = useState(null);
   const [latestSim, setLatestSim] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState(null);
   const [isEnergyModalOpen, setIsEnergyModalOpen] = useState(false);
@@ -41,27 +28,27 @@ export default function DashboardPage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'idle'
-  const [isLiveFluctuation, setIsLiveFluctuation] = useState(false);
   const [simNotification, setSimNotification] = useState(null);
+  const [simProgress, setSimProgress] = useState(null);
+  const [simError, setSimError] = useState(null);
+  const [policyStatus, setPolicyStatus] = useState(null);
 
-  // Load servers, savings, and latest simulation on initial mount
   const loadData = async () => {
     setLoading(true);
+    setBackendError(null);
+    fetchPolicies().then(setPolicyStatus).catch(() => setPolicyStatus(null));
     try {
-      const [serversRes, savingsRes, latestSimRes] = await Promise.all([
+      const [serversRes, latestSimRes, latestComparison] = await Promise.all([
         fetchServers(),
-        fetchEnergySavings(),
-        fetchLatestSimulation()
+        fetchLatestSimulation(),
+        fetchLatestComparison()
       ]);
-      setServers(serversRes.data || FALLBACK_16_SERVERS);
-      setSavingsData(savingsRes.data || FALLBACK_ENERGY_SAVINGS);
-      if (latestSimRes) {
-        setLatestSim(latestSimRes);
-      }
+      setServers(serversRes.data);
+      setLatestSim(latestSimRes);
+      setComparison(latestComparison);
     } catch (err) {
-      console.error("Failed to load initial data:", err);
-      setServers(FALLBACK_16_SERVERS);
-      setSavingsData(FALLBACK_ENERGY_SAVINGS);
+      setServers([]);
+      setBackendError(err.message);
     } finally {
       setLoading(false);
     }
@@ -71,69 +58,32 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  // Trigger POST /api/simulations to run Min-Min or DQN Simulation Engine
-  const handleRunSimulation = async ({ num_tasks, policy, seed }) => {
+  const handleRunSimulation = async (params) => {
     setIsSimulating(true);
     setSimNotification(null);
+    setSimError(null);
+    setSimProgress({ status: 'queued', progress: 0 });
     try {
-      const result = await runSimulation({ num_tasks, policy, seed });
-      const simData = result.data;
-
-      // 1. Dynamic Data Binding: Replace grid data with simulation result
-      if (simData.servers && simData.servers.length > 0) {
-        setServers(simData.servers);
-      }
-
-      // 2. Metrics Update: Save simulation run data for the 'Energy Saved' card & KPIs
-      setLatestSim(simData);
-
-      // 3. Update notification banner with policy & SLA info
+      const run = await runSimulation(params, (r) => setSimProgress({ status: r.status, progress: r.progress ?? 0 }));
+      setLatestSim(run);
+      const serversRes = await fetchServers();
+      setServers(serversRes.data);
       setSimNotification({
-        run_id: simData.run_id,
-        policy: simData.policy || policy,
-        tasks: simData.total_tasks,
-        makespan: simData.makespan_seconds,
-        saved_kwh: simData.energy_saved_kwh,
-        saved_pct: simData.energy_saved_pct,
-        sla_violations: simData.sla_violations_count || 0
+        run_id: run.run_id,
+        policy: run.policy,
+        tasks: run.num_tasks,
+        makespan: run.makespan,
+        energy_kwh: run.total_energy_kwh,
+        sla_violations: run.sla_violations
       });
-
-      // Refresh dynamic energy savings
-      fetchEnergySavings().then(res => {
-        if (res && res.data) setSavingsData(res.data);
-      });
-
-      // Automatically dismiss banner after 7 seconds
-      setTimeout(() => {
-        setSimNotification(null);
-      }, 7000);
+      setTimeout(() => setSimNotification(null), 7000);
     } catch (err) {
-      console.error("Simulation run error:", err);
+      setSimError(err.message);
     } finally {
       setIsSimulating(false);
+      setSimProgress(null);
     }
   };
-
-  // Live fluctuation simulation tick (toggleable)
-  useEffect(() => {
-    if (!isLiveFluctuation) return;
-
-    const interval = setInterval(() => {
-      setServers((prevServers) =>
-        prevServers.map((srv) => {
-          if (srv.status.toLowerCase() === 'idle') return srv;
-          const delta = (Math.random() - 0.48) * 2.5;
-          const nextUtil = Math.min(98.0, Math.max(15.0, srv.current_utilization + delta));
-          return {
-            ...srv,
-            current_utilization: Number(nextUtil.toFixed(1))
-          };
-        })
-      );
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [isLiveFluctuation]);
 
   // Handle CPU chip click: isolate selected CPU (100% opacity) while others dim to 20%
   const handleCpuClick = (server) => {
@@ -153,29 +103,9 @@ export default function DashboardPage() {
     setIsUpdating(true);
     try {
       const updated = await toggleServerStatus(serverId);
-      if (updated) {
-        setServers((prev) =>
-          prev.map((s) => (s.server_id === serverId ? updated : s))
-        );
-      } else {
-        setServers((prev) =>
-          prev.map((s) => {
-            if (s.server_id === serverId) {
-              const newStatus = s.status === 'active' ? 'idle' : 'active';
-              return {
-                ...s,
-                status: newStatus,
-                current_utilization: newStatus === 'idle' ? 0.0 : 65.0,
-                active_workloads: newStatus === 'idle' ? 0 : 12,
-                flags: newStatus === 'idle' ? 'IDLE_CONSOLIDATED' : 'OPTIMAL_LOAD'
-              };
-            }
-            return s;
-          })
-        );
-      }
+      setServers((prev) => prev.map((s) => (s.server_id === serverId ? updated : s)));
     } catch (err) {
-      console.error("Error toggling server status:", err);
+      setSimError(`Could not toggle ${serverId}: ${err.message}`);
     } finally {
       setIsUpdating(false);
     }
@@ -191,11 +121,11 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      
+
       {/* 1. TOP STATS BAR WITH PROMINENT CLICKABLE 'ENERGY SAVED' CARD */}
       <StatsBar
         servers={servers}
-        savingsData={savingsData}
+        comparison={comparison}
         latestSim={latestSim}
         onOpenEnergyModal={() => setIsEnergyModalOpen(true)}
       />
@@ -213,13 +143,11 @@ export default function DashboardPage() {
                   {simNotification.policy === 'dqn' ? 'DQN RL Agent' : 'Min-Min'} Simulation Complete ({simNotification.run_id})
                 </span>
                 <span className="text-[10px] font-mono bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-semibold">
-                  Saved: +{simNotification.saved_kwh} kWh ({simNotification.saved_pct}%)
+                  Energy: {simNotification.energy_kwh} kWh
                 </span>
-                {simNotification.policy === 'dqn' && (
-                  <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">
-                    SLA Violations: {simNotification.sla_violations}
-                  </span>
-                )}
+                <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">
+                  SLA Violations: {simNotification.sla_violations}
+                </span>
               </div>
               <p className="text-xs text-emerald-800 font-mono mt-0.5">
                 {simNotification.tasks} tasks mapped • Makespan: {simNotification.makespan}s • 4×4 CPU grid updated dynamically
@@ -228,14 +156,9 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-center">
-            {activeView !== 'compare' && (
-              <button
-                onClick={() => setActiveView('compare')}
-                className="text-xs text-indigo-700 hover:text-indigo-900 underline font-semibold cursor-pointer font-mono"
-              >
-                View Comparison →
-              </button>
-            )}
+            <Link to="/compare" className="text-xs text-indigo-700 hover:text-indigo-900 underline font-semibold font-mono">
+              Compare schedulers →
+            </Link>
             <button
               onClick={() => setSimNotification(null)}
               className="text-xs text-emerald-700 hover:text-emerald-900 underline font-semibold cursor-pointer"
@@ -246,71 +169,34 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {backendError && (
+        <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 font-mono flex items-center gap-2">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          <span>Backend unreachable ({backendError}). Start it with `uvicorn main:app` in backend/ and press refresh.</span>
+        </div>
+      )}
+
+      {simError && (
+        <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-mono flex items-center justify-between gap-3">
+          <span>Simulation failed: {simError}</span>
+          <button onClick={() => setSimError(null)} className="underline font-semibold cursor-pointer">Dismiss</button>
+        </div>
+      )}
+
       {/* 3. SIMULATION CONFIGURATION SIDEBAR / PANEL */}
       <div className="mb-6">
         <SimulationControlPanel
           onRunSimulation={handleRunSimulation}
+          policyStatus={policyStatus}
           isRunning={isSimulating}
+          progress={simProgress}
           latestSim={latestSim}
         />
       </div>
 
-      {/* 4. VIEW SELECTION TABS: 4x4 Matrix vs Compare Results */}
-      <div className="flex items-center justify-between mb-6 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setActiveView('matrix')}
-            id="tab-view-matrix"
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              activeView === 'matrix'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Grid3X3 className="w-4 h-4 text-sky-600" />
-            <span>4×4 Compute Matrix</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">
-              16 Sockets
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveView('compare')}
-            id="tab-view-compare"
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              activeView === 'compare'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-indigo-600" />
-            <span>Compare Results</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-200">
-              Min-Min vs DQN
-            </span>
-          </button>
-        </div>
-
-        <div className="hidden sm:flex items-center gap-2 pr-3 text-xs font-mono text-slate-500">
-          <span>{activeView === 'matrix' ? 'Real-Time Telemetry & Server Sockets' : 'Comparative Analytics & Graphs'}</span>
-        </div>
-      </div>
-
-      {/* CONDITIONAL VIEW RENDERING: 4x4 Matrix Grid vs Compare Results */}
-      {activeView === 'compare' ? (
-        <CompareResultsSection
-          onApplySimulationResult={(simData) => {
-            if (simData.servers && simData.servers.length > 0) {
-              setServers(simData.servers);
-            }
-            setLatestSim(simData);
-          }}
-        />
-      ) : (
-        <>
           {/* 4. DASHBOARD CONTROL BAR */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
-            
+
             {/* Left: Focus / Selection status */}
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -340,7 +226,7 @@ export default function DashboardPage() {
 
             {/* Right: Filters & Controls */}
             <div className="flex items-center gap-2.5">
-              
+
               {/* Status Filter Tabs */}
               <div className="bg-slate-100 p-1 rounded-xl flex items-center text-xs font-medium">
                 <button
@@ -375,29 +261,6 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              {/* Live Fluctuation Toggle */}
-              <button
-                onClick={() => setIsLiveFluctuation(!isLiveFluctuation)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
-                  isLiveFluctuation
-                    ? 'bg-sky-50 border-sky-300 text-sky-700'
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-                title="Toggle micro-fluctuation simulation"
-              >
-                {isLiveFluctuation ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Pause Pulse</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Micro Pulse</span>
-                  </>
-                )}
-              </button>
-
               {/* Refresh Data */}
               <button
                 onClick={loadData}
@@ -412,17 +275,17 @@ export default function DashboardPage() {
 
           {/* 5. MAIN INTERACTIVE SECTION: 4x4 GRID + DETAIL PANEL */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            
+
             {/* LEFT / MAIN AREA: 4x4 CPU GRID (8 cols out of 12) */}
             <div className="lg:col-span-8 bg-white/70 backdrop-blur-sm rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
-              
+
               <div className="flex items-center justify-between text-xs text-slate-500 mb-4 pb-2 border-b border-slate-100 font-mono">
                 <span>RACK-A (SRV 01-04) • RACK-B (05-08) • RACK-C (09-12) • RACK-D (13-16)</span>
                 <span className="hidden sm:inline">2D High-Density Socket Layout</span>
               </div>
 
               {/* The 4x4 Neat Grid Layout with Dynamic Data Binding */}
-              <div 
+              <div
                 id="cpu-matrix-grid"
                 className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4"
               >
@@ -467,15 +330,12 @@ export default function DashboardPage() {
             </div>
 
           </div>
-        </>
-      )}
 
       {/* 6. MODAL BREAKDOWN OF ENERGY SAVINGS */}
       <EnergySavingsModal
         isOpen={isEnergyModalOpen}
         onClose={() => setIsEnergyModalOpen(false)}
-        savingsData={savingsData}
-        latestSim={latestSim}
+        comparison={comparison}
       />
 
     </div>

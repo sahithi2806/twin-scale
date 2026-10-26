@@ -1,25 +1,22 @@
 import React from 'react';
-import { 
-  X, 
-  Cpu, 
-  Server, 
-  Thermometer, 
-  Zap, 
-  Layers, 
-  Activity, 
-  Power, 
-  CheckCircle2, 
-  Clock, 
-  RefreshCw,
-  BarChart2,
-  AlertTriangle
+import {
+  X,
+  Cpu,
+  Server,
+  Thermometer,
+  Zap,
+  Layers,
+  Activity,
+  Power,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 
-export default function ServerDetailPanel({ 
-  server, 
-  onClose, 
-  onToggleStatus, 
-  isUpdating 
+export default function ServerDetailPanel({
+  server,
+  onClose,
+  onToggleStatus,
+  isUpdating
 }) {
   if (!server) {
     return (
@@ -31,9 +28,6 @@ export default function ServerDetailPanel({
         <p className="text-xs text-slate-500 max-w-[220px] leading-relaxed">
           Click any CPU chip in the 4×4 grid to isolate its simulation telemetry and scheduler metrics.
         </p>
-        <div className="mt-4 px-3 py-1.5 bg-sky-50 border border-sky-100 rounded-lg text-[11px] font-mono text-sky-700">
-          Min-Min Telemetry Active
-        </div>
       </div>
     );
   }
@@ -47,16 +41,14 @@ export default function ServerDetailPanel({
     temperature_c = 48.0,
     power_draw_w = 320.0,
     active_workloads = 0,
-    avg_utilization,
-    energy_consumed_kwh,
-    flags
+    power_state = 'on'
   } = server;
 
   const isIdle = status.toLowerCase() === 'idle';
   const util = Math.round(current_utilization);
 
   return (
-    <div 
+    <div
       id="server-detail-panel"
       className="bg-white rounded-2xl border border-slate-200 shadow-md p-5 flex flex-col justify-between transition-all"
     >
@@ -124,24 +116,10 @@ export default function ServerDetailPanel({
 
           <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1.5">
             <span>0% (Idle threshold)</span>
-            <span>Avg: {avg_utilization ? `${avg_utilization.toFixed(1)}%` : `${util}%`}</span>
+            <span>{power_state === 'sleep' ? 'Asleep most of the last run' : 'Avg while awake, last run'}</span>
             <span>100% (Peak)</span>
           </div>
         </div>
-
-        {/* Simulation Optimization Flag Banner */}
-        {flags && (
-          <div className="mb-4 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs font-mono">
-            <span className="text-slate-500">Scheduler Flag:</span>
-            <span className={`font-bold px-2 py-0.5 rounded ${
-              flags.includes('IDLE') ? 'bg-slate-200 text-slate-700' :
-              flags.includes('HOTSPOT') ? 'bg-amber-100 text-amber-800' :
-              'bg-emerald-100 text-emerald-800'
-            }`}>
-              {flags}
-            </span>
-          </div>
-        )}
 
         {/* Hardware Capacity Specs */}
         <div className="mb-4">
@@ -161,7 +139,7 @@ export default function ServerDetailPanel({
 
         {/* Real-time Telemetry Grid */}
         <div className="grid grid-cols-2 gap-2.5 mb-4">
-          
+
           {/* Temperature */}
           <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-100">
             <div className="flex items-center gap-1.5 text-slate-500 text-xs mb-1">
@@ -186,7 +164,7 @@ export default function ServerDetailPanel({
               {power_draw_w.toFixed(0)} W
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
-              {energy_consumed_kwh ? `${energy_consumed_kwh} kWh (run)` : 'Active draw'}
+              Average over the last run
             </div>
           </div>
 

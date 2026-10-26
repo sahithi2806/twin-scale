@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, Zap, Activity, Flame } from 'lucide-react';
+import { Flame, Moon } from 'lucide-react';
 
 export default function CpuChip({
   server,
@@ -17,10 +17,17 @@ export default function CpuChip({
   } = server;
 
   const isIdle = status.toLowerCase() === 'idle';
+  const isAsleep = server.power_state === 'sleep';
   const util = Math.round(current_utilization);
 
   // Utilization color palette (soft blue/green tech accents)
   const getUtilColor = () => {
+    if (isAsleep) return {
+      badge: 'bg-indigo-50 text-indigo-600 border-indigo-200',
+      bar: 'bg-indigo-200',
+      ring: 'stroke-indigo-200',
+      text: 'text-indigo-500'
+    };
     if (isIdle || util === 0) return {
       badge: 'bg-slate-100 text-slate-600 border-slate-200',
       bar: 'bg-slate-300',
@@ -70,7 +77,7 @@ export default function CpuChip({
       role="button"
       tabIndex={0}
       aria-pressed={isSelected}
-      aria-label={`Server ${server_id}, Utilization: ${current_utilization}%, Status: ${status}`}
+      aria-label={`Server ${server_id}, Utilization: ${current_utilization}%, Status: ${status}${isAsleep ? ', asleep' : ''}`}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -78,10 +85,15 @@ export default function CpuChip({
         }
       }}
       id={`cpu-chip-${server_id}`}
-      className={`group relative p-2.5 bg-white rounded-xl border transition-all duration-300 cursor-pointer select-none ${
-        isSelected 
-          ? 'border-sky-400 bg-sky-50/20' 
-          : 'border-slate-200/90 hover:border-slate-300 hover:shadow-xs'
+      data-power-state={isAsleep ? 'sleep' : 'on'}
+      className={`group relative p-2.5 rounded-xl border transition-all duration-300 cursor-pointer select-none ${
+        isAsleep ? 'bg-indigo-50/40 border-dashed' : 'bg-white'
+      } ${
+        isSelected
+          ? 'border-sky-400 bg-sky-50/20'
+          : isAsleep
+            ? 'border-indigo-300 hover:border-indigo-400'
+            : 'border-slate-200/90 hover:border-slate-300 hover:shadow-xs'
       } ${opacityClass}`}
     >
       {/* Decorative CPU Perimeter Pins (Top & Bottom) */}
@@ -91,7 +103,9 @@ export default function CpuChip({
       <div className="absolute top-3 bottom-3 -right-1 w-1 cpu-socket-pin-v opacity-40 group-hover:opacity-75 transition-opacity" />
 
       {/* Main CPU Integrated Heat Spreader (IHS) Container */}
-      <div className="metallic-ihs rounded-lg p-2.5 border border-slate-200 flex flex-col justify-between h-[150px] relative overflow-hidden">
+      <div className={`metallic-ihs rounded-lg p-2.5 border flex flex-col justify-between h-[150px] relative overflow-hidden ${
+        isAsleep ? 'border-indigo-200 saturate-50' : 'border-slate-200'
+      }`}>
         
         {/* Alignment corner notch (Physical CPU socket index mark) */}
         <div className="absolute top-0 left-0 w-3 h-3 bg-amber-400/30 border-r border-b border-amber-500/30 rounded-br-sm" />
@@ -109,15 +123,19 @@ export default function CpuChip({
 
           {/* Status Dot */}
           <div className="flex items-center gap-1">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isIdle 
-                  ? 'bg-slate-400' 
-                  : 'bg-emerald-500 ring-2 ring-emerald-200 animate-tech-pulse'
-              }`}
-            />
-            <span className="text-[9px] font-mono uppercase font-semibold text-slate-500">
-              {status}
+            {isAsleep ? (
+              <Moon className="w-3 h-3 text-indigo-500" aria-hidden="true" />
+            ) : (
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isIdle
+                    ? 'bg-slate-400'
+                    : 'bg-emerald-500 ring-2 ring-emerald-200 animate-tech-pulse'
+                }`}
+              />
+            )}
+            <span className={`text-[9px] font-mono uppercase font-semibold ${isAsleep ? 'text-indigo-600' : 'text-slate-500'}`}>
+              {isAsleep ? 'asleep' : status}
             </span>
           </div>
         </div>
@@ -161,8 +179,12 @@ export default function CpuChip({
         <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono border-t border-slate-200/70 pt-1.5">
           <span className="text-slate-500">{rack_id || 'RACK-01'}</span>
           <div className="flex items-center gap-0.5 text-slate-600">
-            {isIdle ? (
-              <span className="text-emerald-700 font-semibold bg-emerald-50 px-1 rounded">SLEEP</span>
+            {isAsleep ? (
+              <span className="text-indigo-700 font-semibold bg-indigo-100/70 px-1 rounded flex items-center gap-0.5">
+                <Moon className="w-2.5 h-2.5" /> SLEEP
+              </span>
+            ) : isIdle ? (
+              <span className="text-slate-600 font-semibold bg-slate-100 px-1 rounded">IDLE</span>
             ) : (
               <>
                 <Flame className="w-2.5 h-2.5 text-slate-400" />
