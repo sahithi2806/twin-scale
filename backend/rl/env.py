@@ -110,5 +110,7 @@ def env_signature(raw_servers: Optional[List[Dict[str, Any]]] = None) -> str:
         "overload": config.OVERLOAD_THRESHOLD,
         "dt": config.DT,
         "obs_scales": [MAX_VCPUS, DEADLINE_SCALE_S, QUEUE_SCALE],
+        "power_state_code": POWER_STATE_CODE,
+        "reward_weights": [RL_W_ENERGY, RL_W_SLA, RL_W_OVERLOAD],
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
