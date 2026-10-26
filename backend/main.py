@@ -17,10 +17,13 @@ from database import (
     save_run_results,
     get_run,
     get_latest_run,
+    get_comparison_runs,
+    latest_comparison_id,
 )
-from schemas import Server, ServerUpdate, SimulationRequest
+from schemas import Server, ServerUpdate, SimulationRequest, CompareRequest
+from evaluation import eval_seeds, summarize
 from simulation import run_simulation
-from policies import get_policy, PolicyUnavailable
+from policies import POLICY_NAMES, get_policy, PolicyUnavailable
 
 logger = logging.getLogger("dctwin")
 
@@ -56,6 +59,7 @@ def read_root():
         "endpoints": {
             "servers": "/api/servers",
             "simulations": "POST /api/simulations",
+            "compare": "POST /api/compare, GET /api/compare/latest",
             "health": "/api/health"
         }
     }
@@ -197,6 +201,58 @@ def get_simulation_details(run_id: str):
     if not sim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Simulation run '{run_id}' not found.")
     return sim
+
+
+# --- Multi-seed comparison ---
+
+def comparison_response(comparison_id: str) -> Optional[Dict[str, Any]]:
+    by_policy: Dict[str, List[Dict[str, Any]]] = {}
+    runs = get_comparison_runs(comparison_id)
+    for run in sorted(runs, key=lambda r: r["seed"]):
+        by_policy.setdefault(run["policy"], []).append(run)
+    if not by_policy:
+        return None
+    policies = [p for p in POLICY_NAMES if p in by_policy]
+    first = runs[0]["parameters"]
+    return {
+        "comparison_id": comparison_id,
+        "params": {k: first[k] for k in ("num_tasks", "sleep_enabled", "sla_slack", "arrival_rate")},
+        "seeds": sorted({r["seed"] for r in runs}),
+        "policies": policies,
+        "skipped": {p: "not part of this comparison" for p in POLICY_NAMES if p not in by_policy},
+        "summary": summarize({p: by_policy[p] for p in policies}),
+    }
+
+
+@app.post("/api/compare")
+def run_comparison(req: CompareRequest):
+    """Runs every available policy on the same held-out seeds; stores each run under one comparison_id."""
+    seeds = eval_seeds(req.n_seeds, req.seed_start)
+    available, skipped = {}, {}
+    for name in POLICY_NAMES:
+        try:
+            available[name] = get_policy(name)
+        except PolicyUnavailable as exc:
+            skipped[name] = str(exc)
+    comparison_id = f"CMP-{uuid.uuid4().hex[:10].upper()}"
+    workload = req.model_dump(exclude={"n_seeds", "seed_start"})
+    servers = get_all_servers()
+    for name, policy in available.items():
+        for seed in seeds:
+            run_id = new_run_id()
+            create_run(run_id, name, {**workload, "seed": seed}, comparison_id=comparison_id)
+            save_run_results(run_id, run_simulation(servers, policy, seed=seed, **workload), update_servers=False)
+    response = comparison_response(comparison_id)
+    response["skipped"] = skipped
+    return response
+
+
+@app.get("/api/compare/latest")
+def get_latest_comparison():
+    comparison_id = latest_comparison_id()
+    if not comparison_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No comparison yet. POST /api/compare first.")
+    return comparison_response(comparison_id)
 
 
 @app.post("/api/servers/reset")

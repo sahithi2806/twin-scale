@@ -426,3 +426,30 @@ def update_server(server_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
         finally:
             conn.close()
     return get_server_by_id(server_id)
+
+
+def get_comparison_runs(comparison_id: str) -> List[Dict[str, Any]]:
+    """Finished runs of one comparison, with server_stats (step_metrics omitted: not needed for aggregates)."""
+    conn = get_db_connection()
+    try:
+        runs = []
+        for row in conn.execute(
+                "SELECT * FROM simulations WHERE comparison_id = ? AND status = 'done' ORDER BY rowid",
+                (comparison_id,)):
+            run = _row_to_run(conn, row, details=False)
+            run["server_stats"] = [dict(r) for r in conn.execute(
+                "SELECT * FROM server_stats WHERE run_id = ? ORDER BY server_id", (run["run_id"],))]
+            runs.append(run)
+        return runs
+    finally:
+        conn.close()
+
+
+def latest_comparison_id() -> Optional[str]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute("""SELECT comparison_id FROM simulations WHERE comparison_id IS NOT NULL
+                              AND status = 'done' ORDER BY rowid DESC LIMIT 1""").fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()

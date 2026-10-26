@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
 
 from config import SLA_DEADLINE_SLACK, DEFAULT_ARRIVAL_RATE
+from evaluation import EVAL_SEED_START
 
 class ServerBase(BaseModel):
     server_id: str = Field(..., description="Unique server identifier e.g. SRV-01")
@@ -29,12 +30,21 @@ class ServerUpdate(BaseModel):
 PolicyName = Literal["min-min", "power-aware", "dqn"]
 
 
-class SimulationRequest(BaseModel):
-    policy: PolicyName = Field(default="min-min", description="Scheduling policy")
+class WorkloadParams(BaseModel):
     num_tasks: int = Field(default=200, ge=10, le=2000, description="Number of synthetic tasks")
-    seed: int = Field(default=42, ge=0, description="Workload seed; same seed and policy give identical metrics")
     sleep_enabled: bool = Field(default=True, description="Allow idle servers to enter the sleep state")
     sla_slack: float = Field(default=SLA_DEADLINE_SLACK, ge=1.0, le=10.0,
                              description="Deadline = arrival + sla_slack * ideal execution time")
     arrival_rate: float = Field(default=DEFAULT_ARRIVAL_RATE, gt=0.0, le=50.0,
                                 description="Poisson arrival rate, tasks per second")
+
+
+class SimulationRequest(WorkloadParams):
+    policy: PolicyName = Field(default="min-min", description="Scheduling policy")
+    seed: int = Field(default=42, ge=0, description="Workload seed; same seed and policy give identical metrics")
+
+
+class CompareRequest(WorkloadParams):
+    n_seeds: int = Field(default=10, ge=2, le=50, description="Number of held-out seeds per policy")
+    seed_start: int = Field(default=EVAL_SEED_START, ge=EVAL_SEED_START,
+                            description="First seed; seeds below 1000 are reserved for DQN training")
