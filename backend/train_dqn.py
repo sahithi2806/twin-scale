@@ -2,6 +2,7 @@
 
     python train_dqn.py                 # train on seeds 0-99, write models/dqn.pt and models/dqn_rewards.csv
     python train_dqn.py --epochs 2      # quicker run
+    python train_dqn.py --eval          # evaluate every policy on held-out seeds 1000+ (no training)
 """
 import argparse
 import copy
@@ -13,13 +14,13 @@ from datetime import datetime, timezone
 import numpy as np
 import torch
 
+from evaluation import EVAL_SEED_START, eval_seeds, format_table, summarize
 from rl.dqn_agent import DQNAgent
 from rl.env import DataCenterEnv, env_signature
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRAIN_SEEDS = list(range(0, 100))
 VALIDATION_SEEDS = list(range(100, 105))  # checkpoint selection only; never trained on, never reported
-EVAL_SEED_START = 1000
 assert max(TRAIN_SEEDS) < min(VALIDATION_SEEDS) and max(VALIDATION_SEEDS) < EVAL_SEED_START, \
     "training, validation and held-out evaluation seeds must not overlap"
 
@@ -96,6 +97,24 @@ def train(epochs: int, num_tasks: int, out_path: str, log_path: str, seed: int, 
     print(f"saved weights (epoch {best_epoch}) -> {out_path}\nreward log    -> {log_path}")
 
 
+def evaluate(n_seeds: int, num_tasks: int):
+    from database import INITIAL_16_SERVERS
+    from policies import POLICY_NAMES, PolicyUnavailable, get_policy
+    from simulation import run_simulation
+
+    seeds = eval_seeds(n_seeds)
+    runs = {}
+    for name in POLICY_NAMES:
+        try:
+            policy = get_policy(name)
+        except PolicyUnavailable as exc:
+            print(f"skipping {name}: {exc}")
+            continue
+        runs[name] = [run_simulation(INITIAL_16_SERVERS, policy, num_tasks=num_tasks, seed=s) for s in seeds]
+    print(f"held-out seeds {seeds[0]}-{seeds[-1]}, {num_tasks} tasks, sleep on")
+    print(format_table(summarize(runs)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--epochs", type=int, default=6, help="passes over the 100 training seeds")
@@ -103,8 +122,13 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="seed for network init and exploration")
     parser.add_argument("--out", default=os.path.join(HERE, "models", "dqn.pt"))
     parser.add_argument("--log", default=os.path.join(HERE, "models", "dqn_rewards.csv"))
+    parser.add_argument("--eval", action="store_true", help="evaluate saved weights on held-out seeds, no training")
+    parser.add_argument("--eval-seeds", type=int, default=10)
     args = parser.parse_args()
-    train(args.epochs, args.num_tasks, args.out, args.log, args.seed)
+    if args.eval:
+        evaluate(args.eval_seeds, args.num_tasks)
+    else:
+        train(args.epochs, args.num_tasks, args.out, args.log, args.seed)
 
 
 if __name__ == "__main__":
