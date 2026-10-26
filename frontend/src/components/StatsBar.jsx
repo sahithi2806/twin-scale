@@ -20,7 +20,7 @@ export default function StatsBar({
     : '45.0';
 
   // Dynamic calculation based on simulation run's total energy consumption & savings
-  const hasSim = !!latestSim;
+  const hasSim = latestSim?.energy_saved_kwh != null;
   const isDqn = latestSim?.policy === 'dqn';
   
   const displaySavedKwh = hasSim

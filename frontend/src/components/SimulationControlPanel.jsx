@@ -15,6 +15,7 @@ import {
 export default function SimulationControlPanel({
   onRunSimulation,
   isRunning,
+  progress,
   latestSim
 }) {
   const [numTasks, setNumTasks] = useState(100);
@@ -230,6 +231,21 @@ export default function SimulationControlPanel({
             </>
           )}
         </button>
+
+        {isRunning && progress && (
+          <div className="space-y-1" aria-live="polite">
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-600">
+              <span className="uppercase tracking-wide">{progress.status}</span>
+              <span>{Math.round((progress.progress || 0) * 100)}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-sky-500 rounded-full transition-all duration-300"
+                style={{ width: `${Math.round((progress.progress || 0) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
       </form>
 
       {/* Latest Run Results Pill / Card */}
@@ -241,8 +257,9 @@ export default function SimulationControlPanel({
           </div>
 
           <div className="flex items-center gap-3 text-slate-600">
-            <span>Makespan: <strong>{latestSim.makespan_seconds}s</strong></span>
-            <span className="text-emerald-700 font-semibold">Saved: <strong>+{latestSim.energy_saved_kwh} kWh</strong></span>
+            <span>Makespan: <strong>{latestSim.makespan}s</strong></span>
+            <span className="text-emerald-700 font-semibold">Energy: <strong>{latestSim.total_energy_kwh} kWh</strong></span>
+            <span>SLA violations: <strong>{latestSim.sla_violations}</strong></span>
           </div>
         </div>
       )}

@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
+import logging
 import random
 
 import uuid
@@ -12,12 +13,15 @@ from database import (
     get_server_by_id,
     update_server,
     create_run,
+    set_run_status,
     save_run_results,
     get_run,
     get_latest_run,
 )
 from models import Server, ServerUpdate, SimulationRequest
 from simulation import SimulationEngine
+
+logger = logging.getLogger("dctwin")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -160,17 +164,35 @@ def _legacy_to_result(sim: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/simulations")
-def run_simulation(req: SimulationRequest):
-    raw_servers = get_all_servers()
+def new_run_id() -> str:
+    return f"RUN-{uuid.uuid4().hex[:10].upper()}"
+
+
+def run_engine(policy: str, params: Dict[str, Any], progress_cb=None) -> Dict[str, Any]:
+    sim = SimulationEngine(get_all_servers()).run_simulation(
+        num_tasks=params["num_tasks"], policy=policy, seed=params["seed"], num_steps=params["num_steps"])
+    return _legacy_to_result(sim)
+
+
+def execute_run(run_id: str, policy: str, params: Dict[str, Any], update_servers: bool = True):
+    try:
+        set_run_status(run_id, "running", progress=0.0)
+        result = run_engine(
+            policy, params, progress_cb=lambda p: set_run_status(run_id, "running", progress=round(p, 3)))
+        save_run_results(run_id, result, update_servers=update_servers)
+    except Exception as exc:
+        logger.exception("simulation run %s failed", run_id)
+        set_run_status(run_id, "failed", error=f"{type(exc).__name__}: {exc}")
+
+
+@app.post("/api/simulations", status_code=status.HTTP_202_ACCEPTED)
+def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
     params = {"num_tasks": req.num_tasks, "seed": req.seed, "num_steps": req.num_steps,
               "sleep_enabled": True, "sla_slack": 1.4}
-    run_id = f"RUN-{uuid.uuid4().hex[:10].upper()}"
+    run_id = new_run_id()
     create_run(run_id, req.policy, params)
-    sim = SimulationEngine(raw_servers).run_simulation(
-        num_tasks=req.num_tasks, policy=req.policy, seed=req.seed, num_steps=req.num_steps)
-    save_run_results(run_id, _legacy_to_result(sim))
-    return get_run(run_id)
+    background_tasks.add_task(execute_run, run_id, req.policy, params)
+    return {"run_id": run_id, "status": "queued"}
 
 
 @app.get("/api/simulations/latest")
@@ -184,7 +206,9 @@ def get_latest_sim():
 
 @app.get("/api/simulations/{run_id}")
 def get_simulation_details(run_id: str):
-    sim = get_run(run_id)
+    sim = get_run(run_id, details=False)
+    if sim and sim["status"] == "done":
+        sim = get_run(run_id)
     if not sim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Simulation run '{run_id}' not found.")
     return sim

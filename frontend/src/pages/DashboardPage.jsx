@@ -43,6 +43,8 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'active' | 'idle'
   const [isLiveFluctuation, setIsLiveFluctuation] = useState(false);
   const [simNotification, setSimNotification] = useState(null);
+  const [simProgress, setSimProgress] = useState(null);
+  const [simError, setSimError] = useState(null);
 
   // Load servers, savings, and latest simulation on initial mount
   const loadData = async () => {
@@ -71,46 +73,30 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  // Trigger POST /api/simulations to run Min-Min or DQN Simulation Engine
-  const handleRunSimulation = async ({ num_tasks, policy, seed }) => {
+  const handleRunSimulation = async (params) => {
     setIsSimulating(true);
     setSimNotification(null);
+    setSimError(null);
+    setSimProgress({ status: 'queued', progress: 0 });
     try {
-      const result = await runSimulation({ num_tasks, policy, seed });
-      const simData = result.data;
-
-      // 1. Dynamic Data Binding: Replace grid data with simulation result
-      if (simData.servers && simData.servers.length > 0) {
-        setServers(simData.servers);
-      }
-
-      // 2. Metrics Update: Save simulation run data for the 'Energy Saved' card & KPIs
-      setLatestSim(simData);
-
-      // 3. Update notification banner with policy & SLA info
+      const run = await runSimulation(params, (r) => setSimProgress({ status: r.status, progress: r.progress ?? 0 }));
+      setLatestSim(run);
+      const serversRes = await fetchServers();
+      setServers(serversRes.data);
       setSimNotification({
-        run_id: simData.run_id,
-        policy: simData.policy || policy,
-        tasks: simData.total_tasks,
-        makespan: simData.makespan_seconds,
-        saved_kwh: simData.energy_saved_kwh,
-        saved_pct: simData.energy_saved_pct,
-        sla_violations: simData.sla_violations_count || 0
+        run_id: run.run_id,
+        policy: run.policy,
+        tasks: run.num_tasks,
+        makespan: run.makespan,
+        energy_kwh: run.total_energy_kwh,
+        sla_violations: run.sla_violations
       });
-
-      // Refresh dynamic energy savings
-      fetchEnergySavings().then(res => {
-        if (res && res.data) setSavingsData(res.data);
-      });
-
-      // Automatically dismiss banner after 7 seconds
-      setTimeout(() => {
-        setSimNotification(null);
-      }, 7000);
+      setTimeout(() => setSimNotification(null), 7000);
     } catch (err) {
-      console.error("Simulation run error:", err);
+      setSimError(err.message);
     } finally {
       setIsSimulating(false);
+      setSimProgress(null);
     }
   };
 
@@ -213,13 +199,11 @@ export default function DashboardPage() {
                   {simNotification.policy === 'dqn' ? 'DQN RL Agent' : 'Min-Min'} Simulation Complete ({simNotification.run_id})
                 </span>
                 <span className="text-[10px] font-mono bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-semibold">
-                  Saved: +{simNotification.saved_kwh} kWh ({simNotification.saved_pct}%)
+                  Energy: {simNotification.energy_kwh} kWh
                 </span>
-                {simNotification.policy === 'dqn' && (
-                  <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">
-                    SLA Violations: {simNotification.sla_violations}
-                  </span>
-                )}
+                <span className="text-[10px] font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-semibold">
+                  SLA Violations: {simNotification.sla_violations}
+                </span>
               </div>
               <p className="text-xs text-emerald-800 font-mono mt-0.5">
                 {simNotification.tasks} tasks mapped • Makespan: {simNotification.makespan}s • 4×4 CPU grid updated dynamically
@@ -246,11 +230,19 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {simError && (
+        <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-mono flex items-center justify-between gap-3">
+          <span>Simulation failed: {simError}</span>
+          <button onClick={() => setSimError(null)} className="underline font-semibold cursor-pointer">Dismiss</button>
+        </div>
+      )}
+
       {/* 3. SIMULATION CONFIGURATION SIDEBAR / PANEL */}
       <div className="mb-6">
         <SimulationControlPanel
           onRunSimulation={handleRunSimulation}
           isRunning={isSimulating}
+          progress={simProgress}
           latestSim={latestSim}
         />
       </div>

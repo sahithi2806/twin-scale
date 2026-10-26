@@ -254,80 +254,42 @@ export async function toggleServerStatus(serverId) {
   }
 }
 
-/**
- * Triggers POST /api/simulations to run the Min-Min simulation engine
- */
-export async function runSimulation({ num_tasks = 100, policy = 'min-min', seed = 42, num_steps = 15 }) {
+async function readError(res) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/simulations`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        num_tasks: Number(num_tasks),
-        policy,
-        seed: Number(seed),
-        num_steps: Number(num_steps)
-      })
-    });
-    if (!res.ok) {
-      throw new Error(`Simulation request failed: HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    return { data, isBackendConnected: true };
-  } catch (err) {
-    console.warn("Backend simulation API offline, running synthetic client fallback:", err);
-    
-    // Client-side fallback simulation to ensure UI continues to function gracefully
-    const simId = `SIM-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    const makespan = Math.round(80 + (num_tasks * 0.45));
-    const totalEnergy = Number((0.0035 * num_tasks).toFixed(4));
-    const baselineEnergy = Number((totalEnergy * 1.48).toFixed(4));
-    const energySaved = Number((baselineEnergy - totalEnergy).toFixed(4));
+    const body = await res.json();
+    return typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body);
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
 
-    const simulatedServers = FALLBACK_16_SERVERS.map((srv, idx) => {
-      const isIdleNode = idx % 4 === 3 && num_tasks < 250;
-      const util = isIdleNode ? 0.0 : Math.min(95.0, Math.round(35 + (idx * 3.8 + (seed % 17)) % 52));
-      const activeWorkloads = isIdleNode ? 0 : Math.round(num_tasks / 12 + (idx % 3));
-      return {
-        ...srv,
-        current_utilization: util,
-        status: isIdleNode ? 'idle' : 'active',
-        active_workloads: activeWorkloads,
-        temperature_c: isIdleNode ? 32.0 : Math.round(30 + (util * 0.35)),
-        power_draw_w: isIdleNode ? 70.0 : Math.round(80 + (util * 3.4)),
-        avg_utilization: util,
-        energy_consumed_kwh: Number((totalEnergy / 14).toFixed(4)),
-        flags: isIdleNode ? 'IDLE_CONSOLIDATED' : util > 80 ? 'HOTSPOT_HIGH_LOAD' : 'OPTIMAL_LOAD'
-      };
-    });
+export async function startSimulation(params) {
+  const res = await fetch(`${API_BASE_URL}/api/simulations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
 
-    const fallbackResponse = {
-      run_id: simId,
-      policy: policy,
-      parameters: { num_tasks, seed, num_steps },
-      total_tasks: num_tasks,
-      makespan_seconds: makespan,
-      total_energy_kwh: totalEnergy,
-      baseline_energy_kwh: baselineEnergy,
-      energy_saved_kwh: energySaved,
-      energy_saved_pct: 32.4,
-      cost_saved_usd: Number((energySaved * 0.14).toFixed(2)),
-      carbon_reduction_kg: Number((energySaved * 0.42).toFixed(2)),
-      pue_ratio: 1.15,
-      servers: simulatedServers,
-      server_stats: simulatedServers.map(s => ({
-        server_id: s.server_id,
-        avg_utilization: s.current_utilization,
-        energy_consumed: s.energy_consumed_kwh || 0.02,
-        total_tasks_assigned: s.active_workloads || 0,
-        flags: s.flags || ''
-      })),
-      step_metrics: []
-    };
+export async function getSimulation(runId) {
+  const res = await fetch(`${API_BASE_URL}/api/simulations/${encodeURIComponent(runId)}`);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
 
-    return { data: fallbackResponse, isBackendConnected: false };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function runSimulation(params, onProgress = () => {}) {
+  const { run_id } = await startSimulation(params);
+  onProgress({ run_id, status: 'queued', progress: 0 });
+  for (;;) {
+    const run = await getSimulation(run_id);
+    onProgress(run);
+    if (run.status === 'done') return run;
+    if (run.status === 'failed') throw new Error(run.error || 'Simulation failed');
+    await sleep(500);
   }
 }
 
